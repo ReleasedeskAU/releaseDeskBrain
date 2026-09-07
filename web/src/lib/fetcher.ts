@@ -41,6 +41,39 @@ export function isAuthStatusError(error: unknown): boolean {
 }
 
 /**
+ * Statuses that mean an optional endpoint is absent or gated — not that the
+ * app failed to boot. Community `/enterprise-settings` 404s; logged-out
+ * callers may see 401/403 on the same path.
+ */
+export function isOptionalEndpointMiss(error: unknown): boolean {
+  return (
+    error instanceof FetchError &&
+    (error.status === 401 || error.status === 403 || error.status === 404)
+  );
+}
+
+/**
+ * GET JSON that treats 401/403/404 as "not configured" (`null`) instead of
+ * throwing. Real failures (5xx, network, other 4xx) still throw FetchError.
+ */
+export async function optionalJsonFetcher<T>(url: string): Promise<T | null> {
+  const res = await fetch(url);
+  if (res.status === 404 || res.status === 401 || res.status === 403) {
+    return null;
+  }
+  if (!res.ok) {
+    let info: unknown = null;
+    try {
+      info = await res.json();
+    } catch {
+      info = null;
+    }
+    throw new FetchError(DEFAULT_ERROR_MSG, res.status, info);
+  }
+  return res.json();
+}
+
+/**
  * SWR `onErrorRetry` callback that suppresses automatic retries for
  * auth or tier-gated errors (401/402/403). Pass this to any SWR hook whose
  * endpoint requires auth or a specific tier so that unauthenticated /

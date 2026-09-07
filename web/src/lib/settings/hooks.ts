@@ -4,7 +4,11 @@ import useSWR from "swr";
 import { useMemo } from "react";
 import { usePathname } from "next/navigation";
 import useCCPairs from "@/hooks/useCCPairs";
-import { errorHandlingFetcher } from "@/lib/fetcher";
+import {
+  errorHandlingFetcher,
+  isOptionalEndpointMiss,
+  optionalJsonFetcher,
+} from "@/lib/fetcher";
 import { SWR_KEYS } from "@/lib/swr-keys";
 import { isAuthPath } from "@/lib/auth/paths";
 import {
@@ -74,18 +78,18 @@ export function useSettings(): AppSettings {
     data: enterprise,
     error: enterpriseError,
     isLoading: enterpriseLoading,
-  } = useSWR<EnterpriseSettings>(
+  } = useSWR<EnterpriseSettings | null>(
     shouldFetchEnterprise ? SWR_KEYS.enterpriseSettings : null,
-    errorHandlingFetcher,
+    optionalJsonFetcher<EnterpriseSettings>,
     {
       revalidateOnFocus: false,
       revalidateOnReconnect: false,
       revalidateIfStale: false,
       dedupingInterval: 30_000,
       errorRetryInterval: SETTINGS_ERROR_RETRY_INTERVAL,
-      // No retry on auth pages: a CE backend 404s this endpoint and the login
-      // page should settle on default branding instead of re-fetching.
-      shouldRetryOnError: !onAuthPath,
+      // Community 404 and logged-out 401/403 are `null` from the fetcher, not
+      // errors. Do not retry those misses; login must settle on default branding.
+      shouldRetryOnError: (err) => !onAuthPath && !isOptionalEndpointMiss(err),
       // Referential equality — logo can change without JSON changing, so
       // mutate() must propagate a new reference for cache-busters.
       compare: (a, b) => a === b,
@@ -111,7 +115,10 @@ export function useSettings(): AppSettings {
       !settingsLoading && !settingsError && core.vector_db_enabled !== false,
     isLoading:
       settingsLoading || (shouldFetchEnterprise ? enterpriseLoading : false),
-    error: settingsError ?? enterpriseError,
+    // A missing EE endpoint is default branding, not a boot failure.
+    error:
+      settingsError ??
+      (isOptionalEndpointMiss(enterpriseError) ? undefined : enterpriseError),
   };
 }
 

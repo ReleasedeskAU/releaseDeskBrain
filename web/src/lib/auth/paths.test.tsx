@@ -8,6 +8,7 @@ import { isAuthPath } from "@/lib/auth/paths";
 import { useSettings } from "@/lib/settings/hooks";
 import { useLLMProviders } from "@/lib/languageModels/hooks";
 import { SWR_KEYS } from "@/lib/swr-keys";
+import { FetchError } from "@/lib/fetcher";
 
 jest.mock("swr", () => ({
   __esModule: true,
@@ -65,6 +66,20 @@ describe("app-shell fetches are gated on /auth/* routes", () => {
     mockUsePathname.mockReturnValue("/chat");
     renderHook(() => useSettings());
     expect(mockUseSWR.mock.calls[0]?.[0]).toBe(SWR_KEYS.settings);
+  });
+
+  test("useSettings does not treat enterprise-settings 404 as a boot error", () => {
+    mockUsePathname.mockReturnValue("/auth/login");
+    const miss = Object.create(FetchError.prototype) as FetchError;
+    miss.status = 404;
+    miss.message = "not found";
+    mockUseSWR
+      .mockReturnValueOnce(swrStub())
+      .mockReturnValueOnce({ ...swrStub(), error: miss });
+    const { result } = renderHook(() => useSettings());
+    expect(result.current.error).toBeUndefined();
+    expect(result.current.enterprise).toBeNull();
+    expect(result.current.appName).toBe("Onyx");
   });
 
   test("useLLMProviders skips the providers fetch on /auth/*", () => {

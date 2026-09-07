@@ -97,7 +97,8 @@ export async function fetchSettingsSS(): Promise<CombinedSettings | null> {
         enterpriseSettings = await enterpriseResponse.json();
       } else if (
         enterpriseResponse.status !== 403 &&
-        enterpriseResponse.status !== 401
+        enterpriseResponse.status !== 401 &&
+        enterpriseResponse.status !== 404
       ) {
         throw new Error(
           `fetchSettingsSS: enterprise failed status=${
