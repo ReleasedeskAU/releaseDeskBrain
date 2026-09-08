@@ -55,6 +55,7 @@ from onyx.connectors.jira.utils import (
     jira_label_values,
     jira_last_updater,
     jira_named_value,
+    jira_status_category_key,
     jira_sdk_call,
     jira_session_request,
     jira_status_was_values,
@@ -90,6 +91,7 @@ _FIELD_REPORTER = "reporter"
 _FIELD_ASSIGNEE = "assignee"
 _FIELD_PRIORITY = "priority"
 _FIELD_STATUS = "status"
+_FIELD_STATUS_CATEGORY = "status_category"
 _FIELD_RESOLUTION = "resolution"
 _FIELD_LABELS = "labels"
 _FIELD_KEY = "key"
@@ -464,6 +466,30 @@ def _put_user_metadata(
         )
 
 
+def _put_status_metadata(
+    metadata: dict[str, str | list[str]],
+    stats: JiraFieldStats | None,
+    issue_key: str,
+    issue: Issue,
+) -> None:
+    """Tag status name and portable statusCategory.key (never the localized name)."""
+    payload = best_effort_get_field_from_issue(issue, _FIELD_STATUS)
+    _put_named_metadata(metadata, stats, issue_key, _FIELD_STATUS, payload)
+    category = jira_status_category_key(payload)
+    if category:
+        metadata[_FIELD_STATUS_CATEGORY] = category
+    if stats is not None:
+        stats.observe(
+            _FIELD_STATUS_CATEGORY,
+            present=payload is not None,
+            tagged=bool(category),
+            issue_key=issue_key,
+            reason="missing statusCategory.key"
+            if payload is not None and not category
+            else None,
+        )
+
+
 def _put_named_metadata(
     metadata: dict[str, str | list[str]],
     stats: JiraFieldStats | None,
@@ -523,13 +549,7 @@ def _build_jira_metadata(
         _FIELD_PRIORITY,
         best_effort_get_field_from_issue(issue, _FIELD_PRIORITY),
     )
-    _put_named_metadata(
-        metadata,
-        stats,
-        str(issue_key),
-        _FIELD_STATUS,
-        best_effort_get_field_from_issue(issue, _FIELD_STATUS),
-    )
+    _put_status_metadata(metadata, stats, str(issue_key), issue)
     _put_named_metadata(
         metadata,
         stats,

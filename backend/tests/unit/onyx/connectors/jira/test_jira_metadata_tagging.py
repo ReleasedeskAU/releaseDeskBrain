@@ -12,6 +12,7 @@ from onyx.connectors.jira.utils import (
     best_effort_get_field_from_issue,
     jira_issue_link_pairs,
     jira_last_updater,
+    jira_status_category_key,
     jira_status_was_values,
     jira_user_display_name,
     jira_user_email,
@@ -213,3 +214,44 @@ def test_completeness_mismatch_is_detectable() -> None:
     )
     assert stats.dropped["assignee"] == 1
     assert stats.present["assignee"] != stats.tagged.get("assignee", 0)
+
+
+def test_status_category_key_accepts_only_jira_keys() -> None:
+    assert (
+        jira_status_category_key({"name": "Closed", "statusCategory": {"key": "done"}})
+        == "done"
+    )
+    assert (
+        jira_status_category_key(
+            {"name": "To Do", "statusCategory": {"key": "new", "name": "To Do"}}
+        )
+        == "new"
+    )
+    assert jira_status_category_key({"name": "Done"}) is None
+    assert (
+        jira_status_category_key({"name": "Closed", "statusCategory": {"key": "closed"}})
+        is None
+    )
+    assert jira_status_category_key(None) is None
+
+
+def test_closed_ticket_with_done_category_is_tagged() -> None:
+    issue = _issue("RD-200", assignee={"displayName": "Ada"}, status="Closed")
+    issue.raw["fields"]["status"] = {
+        "name": "Closed",
+        "statusCategory": {"id": 3, "key": "done", "name": "Done"},
+    }
+    doc = process_jira_issue("https://example.atlassian.net", issue)
+    assert doc is not None
+    assert doc.metadata["status"] == "Closed"
+    assert doc.metadata["status_category"] == "done"
+
+
+def test_done_status_name_without_category_is_not_classified() -> None:
+    doc = process_jira_issue(
+        "https://example.atlassian.net",
+        _issue("RD-201", assignee={"displayName": "Ada"}, status="Done"),
+    )
+    assert doc is not None
+    assert doc.metadata["status"] == "Done"
+    assert "status_category" not in doc.metadata

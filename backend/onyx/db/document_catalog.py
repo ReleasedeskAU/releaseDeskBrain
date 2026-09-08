@@ -36,6 +36,7 @@ KEY_TAG = "key"
 LIST_PROJECTION_KEYS = (
     "assignee",
     "status",
+    "status_category",
     "priority",
     "created",
     "updated",

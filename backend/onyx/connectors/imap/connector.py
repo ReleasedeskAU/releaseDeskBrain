@@ -3,7 +3,6 @@ import email
 import imaplib
 import os
 import re
-from datetime import datetime, timezone
 from email.message import Message
 from email.utils import parseaddr
 from enum import Enum
@@ -14,6 +13,14 @@ from pydantic import BaseModel
 
 from onyx.access.models import ExternalAccess
 from onyx.configs.constants import DocumentSource
+from onyx.connectors.exceptions import ConnectorValidationError
+from onyx.connectors.imap.allowed_senders import (
+    AllowedSender,
+    AllowedSendersError,
+    build_mailbox_search_criteria,
+    parse_allowed_senders,
+)
+from onyx.connectors.imap.from_header import email_ids_allowed_for_body_fetch
 from onyx.connectors.imap.models import EmailHeaders
 from onyx.connectors.interfaces import (
     CheckpointedConnectorWithPermSync,
@@ -74,10 +81,16 @@ class ImapConnector(
         host: str,
         port: int = _DEFAULT_IMAP_PORT_NUMBER,
         mailboxes: list[str] | None = None,
+        allowed_senders: list[str] | None = None,
     ) -> None:
         self._host = host
         self._port = port
         self._mailboxes = mailboxes
+        try:
+            self._allowed_senders = parse_allowed_senders(allowed_senders)
+        except AllowedSendersError as exc:
+            # Invalid allow-list must not become "index everyone."
+            raise ConnectorValidationError(str(exc)) from exc
         self._credentials: dict[str, Any] | None = None
 
     @property
@@ -171,6 +184,7 @@ class ImapConnector(
                 mailbox=mailbox,
                 start=start,
                 end=end,
+                allowed_senders=self._allowed_senders,
             )
             checkpoint.current_mailbox = CurrentMailbox(
                 mailbox=mailbox,
@@ -187,7 +201,9 @@ class ImapConnector(
             checkpoint.current_mailbox.todo_email_ids[_PAGE_SIZE:]
         )
 
-        for email_id in current_todos:
+        for email_id in email_ids_allowed_for_body_fetch(
+            mail_client, current_todos, self._allowed_senders
+        ):
             email_msg = _fetch_email(mail_client=mail_client, email_id=email_id)
             if not email_msg:
                 logger.warning(
@@ -303,12 +319,13 @@ def _fetch_email_ids_in_mailbox(
     mailbox: str,
     start: SecondsSinceUnixEpoch,
     end: SecondsSinceUnixEpoch,
+    allowed_senders: tuple[AllowedSender, ...] = (),
 ) -> list[str]:
     _select_mailbox(mail_client=mail_client, mailbox=mailbox)
 
-    start_str = datetime.fromtimestamp(start, tz=timezone.utc).strftime("%d-%b-%Y")
-    end_str = datetime.fromtimestamp(end, tz=timezone.utc).strftime("%d-%b-%Y")
-    search_criteria = f'(SINCE "{start_str}" BEFORE "{end_str}")'
+    search_criteria = build_mailbox_search_criteria(
+        start=start, end=end, allow_list=allowed_senders
+    )
 
     status, email_ids_byte_array = mail_client.search(None, search_criteria)
 

@@ -84,7 +84,16 @@ def test_pii_fields_are_never_queryable() -> None:
     assert "issuelink" in fields
     assert "last_updater" in fields
     assert "status_was" in fields
-    assert schema["resolved_statuses"] == ["Done"]
+    assert "status_category" in fields
+    assert "repo" in fields
+    assert "object_type" in fields
+    assert "num_files_changed" in fields
+    assert "num_commits" in fields
+    assert field_uses_contains_match("repo") is False
+    assert field_uses_contains_match("object_type") is False
+    assert schema["resolved_status_category"] == "done"
+    assert schema["status_category_values"] == ["new", "indeterminate", "done"]
+    assert "resolved_statuses" not in schema
     assert "due_before" in schema["date_range_params"]
     assert "created_asc" in schema["sort_by"]
 
@@ -104,6 +113,9 @@ def test_names_and_labels_keep_contains_match() -> None:
     assert stored_value_matches_filter("labels", "release123", "release") is True
     assert stored_value_matches_filter("status", "To Do", "todo") is False
     assert stored_value_matches_filter("status", "To Do", "To Do") is True
+    assert field_uses_contains_match("status_category") is False
+    assert stored_value_matches_filter("status_category", "done", "done") is True
+    assert stored_value_matches_filter("status_category", "done", "Closed") is False
 
 
 def test_and_filters_parse_and_reject_mix() -> None:

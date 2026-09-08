@@ -21,8 +21,9 @@ DATE_TAG_KEYS = frozenset({"created", "updated", "duedate", "resolution_date"})
 ISO_DATE_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 DATE_PREFIX_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})")
 
-# Product decision until StaffLess publishes a richer set.
-RESOLVED_STATUS_VALUES = ("Done",)
+# Jira statusCategory.key values. Display names are localized — never used as the rule.
+STATUS_CATEGORY_VALUES = ("new", "indeterminate", "done")
+RESOLVED_STATUS_CATEGORY = "done"
 
 SORT_BY_VALUES = (
     "key_asc",

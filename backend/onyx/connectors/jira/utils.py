@@ -179,6 +179,30 @@ def jira_named_value(obj: Any) -> str | None:
     return _stringish(_attr_or_raw(obj, "name"))
 
 
+# Jira statusCategory.key values. Display names are localized — never stored.
+STATUS_CATEGORY_KEYS = frozenset({"new", "indeterminate", "done"})
+
+
+def jira_status_category_key(status_obj: Any) -> str | None:
+    """Portable Jira category key from a status Resource or dict.
+
+    Args:
+        status_obj: Jira status object (may include nested statusCategory).
+
+    Returns:
+        ``new``, ``indeterminate``, or ``done`` when present; otherwise None.
+        Invalid or localized names are not mapped.
+    """
+    if status_obj is None:
+        return None
+    category = _attr_or_raw(status_obj, "statusCategory")
+    raw = _stringish(_attr_or_raw(category, "key") if category is not None else None)
+    if not raw:
+        return None
+    key = raw.strip().lower()
+    return key if key in STATUS_CATEGORY_KEYS else None
+
+
 def jira_key_value(obj: Any) -> str | None:
     """Issue or project key from a Resource or raw dict."""
     if obj is None:

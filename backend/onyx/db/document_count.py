@@ -14,8 +14,9 @@ from sqlalchemy.orm import Session
 from onyx.configs.constants import DocumentSource
 from onyx.db.document_date_filter import (
     DATE_TAG_KEYS,
-    RESOLVED_STATUS_VALUES,
+    RESOLVED_STATUS_CATEGORY,
     SORT_BY_VALUES,
+    STATUS_CATEGORY_VALUES,
     DateRangeSpec,
     intersect_date_range_ids,
 )
@@ -28,6 +29,7 @@ ALLOWED_TAG_KEYS = frozenset(
     {
         "assignee",
         "status",
+        "status_category",
         "priority",
         "project",
         "project_name",
@@ -45,6 +47,10 @@ ALLOWED_TAG_KEYS = frozenset(
         "issuelink_type",
         "last_updater",
         "status_was",
+        "repo",
+        "object_type",
+        "num_files_changed",
+        "num_commits",
     }
 )
 CONTAINS_TAG_KEYS = frozenset({"assignee", "reporter", "labels", "last_updater"})
@@ -112,7 +118,8 @@ def queryable_fields() -> dict[str, object]:
         "fields": fields,
         "contains_match": contains,
         "exact_match": exact,
-        "resolved_statuses": list(RESOLVED_STATUS_VALUES),
+        "resolved_status_category": RESOLVED_STATUS_CATEGORY,
+        "status_category_values": list(STATUS_CATEGORY_VALUES),
         "date_range_fields": sorted(DATE_TAG_KEYS),
         "date_range_params": [
             "created_from",
@@ -136,13 +143,18 @@ def queryable_fields() -> dict[str, object]:
             "updated",
             "duedate",
             "priority",
+            "status_category",
         ],
         "cap": MAX_CATALOG_ROWS,
         "note": (
             "Queryable indexed tags only. Date ranges use created_from/created_to, "
             "resolved_from/resolved_to, updated_from/updated_to, due_from/due_to/due_before "
-            "(YYYY-MM-DD). Resolved statuses are published here — not inferred. "
-            "Emails and other PII fields are not listed and cannot be queried."
+            "(YYYY-MM-DD). Resolved = status_category=done (Jira statusCategory.key). "
+            "Open = new + indeterminate. Tickets missing status_category are not classified. "
+            "Emails and other PII fields are not listed and cannot be queried. "
+            "GitHub: source=github document count is PRs/issues/files, not repositories. "
+            "Repository names are the distinct repo tag; PRs vs issues use object_type. "
+            "num_files_changed and num_commits are PR tags, not repository counts."
         ),
     }
 

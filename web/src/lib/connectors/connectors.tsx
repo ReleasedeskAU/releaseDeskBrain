@@ -1991,6 +1991,15 @@ For example, specifying .*-alerts as a "channel to exclude" will cause the conne
         description:
           "Specify mailboxes to index (e.g., INBOX, Sent, Drafts). Leave empty to index all mailboxes.",
       },
+      {
+        type: "list",
+        query: "Enter approved senders or domains:",
+        label: "Approved senders",
+        name: "allowed_senders",
+        optional: true,
+        description:
+          "Optional allow-list of From addresses and domains (for example jira@company.com or company.com). Empty means no sender filter; folders and date range still apply. When set, only matching mail is fetched — other messages are never downloaded in full.",
+      },
     ],
     advanced_values: [],
   },
@@ -2366,4 +2375,5 @@ export interface ImapConfig {
   host: string;
   port?: number;
   mailboxes?: string[];
+  allowed_senders?: string[];
 }
