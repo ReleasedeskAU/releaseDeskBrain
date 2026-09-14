@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- GitHub connector indexes a repository overview (description, default-branch
+  commit count, branch names, contributors, open / merged / closed-without-merge
+  PR snapshot counts, last-commit additions/deletions) and the README. Closed
+  without merging uses GraphQL ``CLOSED`` or list ``merged_at``, not REST
+  ``state=closed`` (which includes merged). Ask can filter PRs by `state` and
+  `merged`.
+
 ### Fixed
 
 - Jira assignee/reporter tags now use `displayName` from the issue payload, the

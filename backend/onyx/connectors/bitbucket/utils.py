@@ -84,6 +84,40 @@ REPO_LIST_RESPONSE_FIELDS: str = ",".join(
     ]
 )
 
+REPO_DETAIL_FIELDS: str = ",".join(
+    [
+        "name",
+        "slug",
+        "full_name",
+        "description",
+        "language",
+        "updated_on",
+        "created_on",
+        "website",
+        "is_private",
+        "mainbranch.name",
+        "project.key",
+        "links.html.href",
+    ]
+)
+
+COMMIT_LIST_RESPONSE_FIELDS: str = ",".join(
+    [
+        "next",
+        "page",
+        "pagelen",
+        "values.hash",
+        "values.date",
+        "values.message",
+        "values.author",
+        "values.links.html.href",
+    ]
+)
+
+README_BASENAMES = ("readme.md", "readme.rst", "readme.txt", "readme")
+MAX_README_BYTES = 1_000_000
+COMMITS_PAGE_LEN = 50
+
 
 class BitbucketRetriableError(Exception):
     """Raised for retriable Bitbucket conditions (429, 5xx)."""
@@ -139,8 +173,12 @@ def bitbucket_get(
 
 
 def build_auth_client(email: str, api_token: str) -> httpx.Client:
-    """Create an authenticated httpx client for Bitbucket Cloud API."""
-    return httpx.Client(auth=(email, api_token), http2=True)
+    """Create an authenticated HTTP/1.1 client for Bitbucket Cloud API.
+
+    HTTP/2 is off on purpose: some Bitbucket edges drop Basic auth on h2,
+    which looks like a 404 on a private workspace instead of 401.
+    """
+    return httpx.Client(auth=(email, api_token), http2=False)
 
 
 def paginate(
@@ -305,3 +343,258 @@ def map_pr_to_document(pr: dict[str, Any], workspace: str, repo_slug: str) -> Do
 
 def _get_user_name(user: dict[str, Any]) -> str:
     return user.get("display_name") or user.get("nickname") or "unknown"
+
+
+def repo_document_id(workspace: str, repo_slug: str) -> str:
+    """Stable Ask id for a repository overview document."""
+    return f"{DocumentSource.BITBUCKET.value}:{workspace}:{repo_slug}:repo"
+
+
+def readme_document_id(workspace: str, repo_slug: str) -> str:
+    """Stable Ask id for a repository README."""
+    return f"{DocumentSource.BITBUCKET.value}:{workspace}:{repo_slug}:readme"
+
+
+def commit_document_id(workspace: str, repo_slug: str, commit_hash: str) -> str:
+    """Stable Ask id for one commit message."""
+    return f"{DocumentSource.BITBUCKET.value}:{workspace}:{repo_slug}:commit:{commit_hash}"
+
+
+def timestamp_in_window(
+    value: str | None,
+    start: float | None,
+    end: float | None,
+) -> bool:
+    """True when the Bitbucket timestamp is inside [start, end]. Missing dates stay in."""
+    dt = parse_bitbucket_datetime(value)
+    if dt is None:
+        return True
+    ts = dt.timestamp()
+    if start is not None and ts < start:
+        return False
+    if end is not None and ts > end:
+        return False
+    return True
+
+
+def commit_is_older_than_start(value: str | None, start: float | None) -> bool:
+    """True when this commit is strictly before the sync window (newest-first stop)."""
+    if start is None:
+        return False
+    dt = parse_bitbucket_datetime(value)
+    if dt is None:
+        return False
+    return dt.timestamp() < start
+
+
+def default_branch_name(repo: dict[str, Any]) -> str | None:
+    """Default branch from a repository payload. None if Bitbucket omitted it."""
+    main = repo.get("mainbranch")
+    if not isinstance(main, dict):
+        return None
+    name = main.get("name")
+    return name.strip() if isinstance(name, str) and name.strip() else None
+
+
+def readme_sort_key(path: str) -> int:
+    """Lower is better. Unknown names sort last."""
+    base = path.rsplit("/", 1)[-1].lower()
+    try:
+        return README_BASENAMES.index(base)
+    except ValueError:
+        return len(README_BASENAMES)
+
+
+def pick_readme_path(entries: list[dict[str, Any]]) -> str | None:
+    """First README-like file in a src directory listing. Directories are ignored."""
+    matches: list[str] = []
+    for entry in entries:
+        if entry.get("type") not in (None, "commit_file", "file"):
+            continue
+        path = entry.get("path")
+        if not isinstance(path, str) or not path:
+            continue
+        if readme_sort_key(path) < len(README_BASENAMES):
+            matches.append(path)
+    if not matches:
+        return None
+    matches.sort(key=readme_sort_key)
+    return matches[0]
+
+
+def map_repo_to_document(repo: dict[str, Any], workspace: str, repo_slug: str) -> Document:
+    """Map a Bitbucket repository payload to a Document (overview only)."""
+    name = repo.get("name") or repo_slug
+    description = repo.get("description") or ""
+    language = repo.get("language") or ""
+    project_key = (repo.get("project") or {}).get("key") or ""
+    branch = default_branch_name(repo) or ""
+    link = repo.get("links", {}).get("html", {}).get("href") or (
+        f"https://bitbucket.org/{workspace}/{repo_slug}"
+    )
+    updated_on = repo.get("updated_on")
+    created_on = repo.get("created_on")
+    content = (
+        "Repository Information:\n"
+        f"- Name: {name}\n"
+        f"- Workspace: {workspace}\n"
+        f"- Slug: {repo_slug}\n"
+        f"- Project: {project_key or 'N/A'}\n"
+        f"- Language: {language or 'N/A'}\n"
+        f"- Default branch: {branch or 'N/A'}\n"
+        f"- Updated: {updated_on or 'N/A'}\n"
+    )
+    if description:
+        content += f"\nDescription:\n{description}"
+    return Document(
+        id=repo_document_id(workspace, repo_slug),
+        sections=[TextSection(link=link, text=content)],
+        source=DocumentSource.BITBUCKET,
+        semantic_identifier=f"{workspace}/{repo_slug}",
+        title=name,
+        doc_updated_at=parse_bitbucket_datetime(updated_on),
+        doc_created_at=parse_bitbucket_datetime(created_on),
+        metadata={
+            "object_type": "Repository",
+            "workspace": workspace,
+            "repository": repo_slug,
+            "language": language,
+            "project": project_key,
+            "default_branch": branch,
+            "link": link,
+            "updated_on": updated_on or "",
+        },
+    )
+
+
+def map_readme_to_document(
+    workspace: str,
+    repo_slug: str,
+    path: str,
+    text: str,
+    branch: str,
+    updated_on: str | None = None,
+) -> Document:
+    """Map README file bytes to a Document. Caller already size-checked the text."""
+    link = f"https://bitbucket.org/{workspace}/{repo_slug}/src/{branch}/{path}"
+    return Document(
+        id=readme_document_id(workspace, repo_slug),
+        sections=[TextSection(link=link, text=text)],
+        source=DocumentSource.BITBUCKET,
+        semantic_identifier=f"{workspace}/{repo_slug} README",
+        title=f"{repo_slug} {path}",
+        doc_updated_at=parse_bitbucket_datetime(updated_on),
+        metadata={
+            "object_type": "Readme",
+            "workspace": workspace,
+            "repository": repo_slug,
+            "path": path,
+            "branch": branch,
+            "link": link,
+        },
+    )
+
+
+def map_commit_to_document(
+    commit: dict[str, Any], workspace: str, repo_slug: str
+) -> Document:
+    """Map a Bitbucket commit to a Document. Message only — no diff."""
+    commit_hash = commit["hash"]
+    message = commit.get("message") or ""
+    first_line = message.split("\n", 1)[0].strip() or commit_hash[:12]
+    author = commit.get("author") or {}
+    author_user = author.get("user") if isinstance(author, dict) else {}
+    author_name = (
+        _get_user_name(author_user)
+        if isinstance(author_user, dict) and author_user
+        else (author.get("raw") if isinstance(author, dict) else None) or "unknown"
+    )
+    date = commit.get("date")
+    link = (
+        commit.get("links", {}).get("html", {}).get("href")
+        or f"https://bitbucket.org/{workspace}/{repo_slug}/commits/{commit_hash}"
+    )
+    content = (
+        "Commit Information:\n"
+        f"- Hash: {commit_hash}\n"
+        f"- Author: {author_name}\n"
+        f"- Date: {date or 'N/A'}\n"
+        f"\nMessage:\n{message}"
+    )
+    return Document(
+        id=commit_document_id(workspace, repo_slug, commit_hash),
+        sections=[TextSection(link=link, text=content)],
+        source=DocumentSource.BITBUCKET,
+        semantic_identifier=f"{repo_slug} {first_line}",
+        title=first_line,
+        doc_updated_at=parse_bitbucket_datetime(date),
+        doc_created_at=parse_bitbucket_datetime(date),
+        primary_owners=[BasicExpertInfo(display_name=author_name)],
+        metadata={
+            "object_type": "Commit",
+            "workspace": workspace,
+            "repository": repo_slug,
+            "hash": commit_hash,
+            "author": author_name,
+            "date": date or "",
+            "link": link,
+        },
+    )
+
+
+def fetch_repository(
+    client: httpx.Client, workspace: str, repo_slug: str
+) -> dict[str, Any]:
+    """GET one repository. Raises Bitbucket*Error on HTTP failure."""
+    url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{repo_slug}"
+    return bitbucket_get(client, url, params={"fields": REPO_DETAIL_FIELDS}).json()
+
+
+def fetch_src_listing(
+    client: httpx.Client, workspace: str, repo_slug: str, revision: str
+) -> list[dict[str, Any]]:
+    """List the repo root at revision. Empty list when the tree is missing."""
+    url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{repo_slug}/src/{revision}/"
+    try:
+        data = bitbucket_get(client, url, params={"pagelen": 100}).json()
+    except BitbucketNonRetriableError:
+        return []
+    values = data.get("values")
+    return values if isinstance(values, list) else []
+
+
+def fetch_src_file(
+    client: httpx.Client, workspace: str, repo_slug: str, revision: str, path: str
+) -> str | None:
+    """Raw file text, or None when missing, binary, or over the size cap."""
+    url = (
+        f"https://api.bitbucket.org/2.0/repositories/{workspace}/{repo_slug}/src/{revision}/{path}"
+    )
+    try:
+        resp = bitbucket_get(client, url)
+    except BitbucketNonRetriableError:
+        return None
+    content = resp.content
+    if len(content) > MAX_README_BYTES or b"\x00" in content[:1024]:
+        return None
+    return content.decode("utf-8", errors="replace")
+
+
+def fetch_commits_page(
+    client: httpx.Client,
+    workspace: str,
+    repo_slug: str,
+    revision: str,
+    start_url: str | None = None,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """One page of commits on revision (newest first). Returns (values, next_url)."""
+    url = (
+        start_url
+        or f"https://api.bitbucket.org/2.0/repositories/{workspace}/{repo_slug}/commits/{revision}"
+    )
+    params = None if start_url else {"fields": COMMIT_LIST_RESPONSE_FIELDS, "pagelen": COMMITS_PAGE_LEN}
+    data = bitbucket_get(client, url, params=params).json()
+    values = data.get("values")
+    items = values if isinstance(values, list) else []
+    next_url = data.get("next")
+    return items, next_url if isinstance(next_url, str) else None

@@ -89,6 +89,10 @@ def test_pii_fields_are_never_queryable() -> None:
     assert "object_type" in fields
     assert "num_files_changed" in fields
     assert "num_commits" in fields
+    assert "state" in fields
+    assert "merged" in fields
+    assert field_uses_contains_match("state") is False
+    assert field_uses_contains_match("merged") is False
     assert field_uses_contains_match("repo") is False
     assert field_uses_contains_match("object_type") is False
     assert schema["resolved_status_category"] == "done"

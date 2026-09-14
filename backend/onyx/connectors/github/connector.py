@@ -27,6 +27,13 @@ from onyx.connectors.exceptions import (
     ValidationError,
 )
 from onyx.connectors.github.models import SerializedRepository
+from onyx.connectors.github.overview import (
+    RepoOverviewFacts,
+    fetch_repo_overview_facts,
+    map_overview_to_document,
+    map_readme_to_document,
+    slim_overview_documents,
+)
 from onyx.connectors.github.rate_limit_utils import sleep_after_rate_limit_exception
 from onyx.connectors.github.utils import (
     deserialize_repository,
@@ -557,6 +564,7 @@ def _convert_file_to_document(
 
 class GithubConnectorStage(Enum):
     START = "start"
+    OVERVIEW = "overview"
     PRS = "prs"
     ISSUES = "issues"
     FILES = "files"
@@ -618,6 +626,7 @@ class GithubConnector(
         include_prs: bool = True,
         include_issues: bool = False,
         include_files: bool = False,
+        include_overview: bool = True,
         branch: str | None = None,
     ) -> None:
         self.repo_owner = repo_owner
@@ -626,6 +635,8 @@ class GithubConnector(
         self.include_prs = include_prs
         self.include_issues = include_issues
         self.include_files = include_files
+        # Repo description, README, branch/commit/PR snapshot counts, contributors.
+        self.include_overview = include_overview
         # Branch to index files from; None means each repo's default branch.
         self.branch = (branch or "").strip() or None
         self.github_client: Github | None = None
@@ -954,6 +965,68 @@ class GithubConnector(
         # True if more file batches remain for this repo.
         return (page + 1) * FILE_BATCH_SIZE < len(file_paths)
 
+    def _fetch_overview_facts(
+        self, repo: Repository.Repository, attempt_num: int = 0
+    ) -> RepoOverviewFacts:
+        """Load overview facts with the same rate-limit retry as other GitHub calls.
+
+        Args:
+            repo: Authenticated repository for the current checkpoint.
+            attempt_num: Rate-limit retry counter.
+
+        Returns:
+            Snapshot facts for overview and README documents.
+
+        Raises:
+            RuntimeError: Too many rate-limit retries.
+            RateLimitExceededException: Re-raised after retries are exhausted via recursion.
+        """
+        if attempt_num > _MAX_NUM_RATE_LIMIT_RETRIES:
+            raise RuntimeError(
+                "Re-tried fetching repository overview too many times. "
+                "Something is going wrong with fetching objects from Github"
+            )
+        assert self.github_client is not None
+        try:
+            return fetch_repo_overview_facts(repo, self._resolve_branch(repo))
+        except RateLimitExceededException:
+            sleep_after_rate_limit_exception(self.github_client)
+            return self._fetch_overview_facts(repo, attempt_num + 1)
+
+    def _index_repo_overview(
+        self,
+        repo: Repository.Repository,
+        is_slim: bool,
+        repo_external_access: ExternalAccess | None,
+    ) -> Generator[Document | ConnectorFailure, None, None]:
+        """Emit repository overview and README documents for one repo.
+
+        Args:
+            repo: Current repository.
+            is_slim: When True, emit ids only for prune/perm-sync.
+            repo_external_access: EE permission payload, or None.
+
+        Yields:
+            Overview/README documents, or a ConnectorFailure if mapping fails.
+        """
+        try:
+            facts = self._fetch_overview_facts(repo)
+            if is_slim:
+                yield from slim_overview_documents(facts, repo_external_access)
+                return
+            yield map_overview_to_document(facts, repo_external_access)
+            readme_doc = map_readme_to_document(facts, repo_external_access)
+            if readme_doc is not None:
+                yield readme_doc
+        except Exception as e:
+            error_msg = f"Error converting repository overview to document: {e}"
+            logger.exception(error_msg)
+            yield ConnectorFailure(
+                failed_entity=EntityFailure(entity_id=f"{repo.full_name}:overview"),
+                failure_message=error_msg,
+                exception=e,
+            )
+
     def _fetch_from_github(
         self,
         checkpoint: GithubConnectorCheckpoint,
@@ -981,7 +1054,11 @@ class GithubConnector(
                 headers=curr_repo.raw_headers,
                 raw_data=curr_repo.raw_data,
             )
-            checkpoint.stage = GithubConnectorStage.PRS
+            checkpoint.stage = (
+                GithubConnectorStage.OVERVIEW
+                if self.include_overview
+                else GithubConnectorStage.PRS
+            )
             checkpoint.curr_page = 0
             # save checkpoint with repo ids retrieved
             return checkpoint
@@ -998,6 +1075,16 @@ class GithubConnector(
             repo_external_access = get_external_access_permission(
                 repo, self.github_client
             )
+        if checkpoint.stage == GithubConnectorStage.OVERVIEW:
+            if self.include_overview:
+                logger.info("Fetching repository overview for repo: %s", repo.name)
+                yield from self._index_repo_overview(
+                    repo, is_slim, repo_external_access
+                )
+            checkpoint.stage = GithubConnectorStage.PRS
+            checkpoint.reset()
+            return checkpoint
+
         if self.include_prs and checkpoint.stage == GithubConnectorStage.PRS:
             logger.info("Fetching PRs for repo: %s", repo.name)
 
@@ -1195,7 +1282,11 @@ class GithubConnector(
                 headers=next_repo.raw_headers,
                 raw_data=next_repo.raw_data,
             )
-            checkpoint.stage = GithubConnectorStage.PRS
+            checkpoint.stage = (
+                GithubConnectorStage.OVERVIEW
+                if self.include_overview
+                else GithubConnectorStage.PRS
+            )
             checkpoint.reset()
 
         if checkpoint.cached_repo_ids:
@@ -1323,10 +1414,15 @@ class GithubConnector(
                 "Invalid connector settings: 'repo_owner' must be provided."
             )
 
-        if not (self.include_prs or self.include_issues or self.include_files):
+        if not (
+            self.include_prs
+            or self.include_issues
+            or self.include_files
+            or self.include_overview
+        ):
             raise ConnectorValidationError(
                 "Invalid connector settings: at least one of pull requests, "
-                "issues, or files must be selected for indexing."
+                "issues, files, or repository overview must be selected for indexing."
             )
 
         try:

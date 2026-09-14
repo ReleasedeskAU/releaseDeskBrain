@@ -32,6 +32,7 @@ def test_github_empty_repository_file_sync_completes(
             "include_prs": False,
             "include_issues": False,
             "include_files": True,
+            "include_overview": False,
         },
         credential_json={"github_access_token": github_access_token},
         access_type=AccessType.PUBLIC,

@@ -51,6 +51,8 @@ ALLOWED_TAG_KEYS = frozenset(
         "object_type",
         "num_files_changed",
         "num_commits",
+        "state",
+        "merged",
     }
 )
 CONTAINS_TAG_KEYS = frozenset({"assignee", "reporter", "labels", "last_updater"})
@@ -152,8 +154,11 @@ def queryable_fields() -> dict[str, object]:
             "(YYYY-MM-DD). Resolved = status_category=done (Jira statusCategory.key). "
             "Open = new + indeterminate. Tickets missing status_category are not classified. "
             "Emails and other PII fields are not listed and cannot be queried. "
-            "GitHub: source=github document count is PRs/issues/files, not repositories. "
-            "Repository names are the distinct repo tag; PRs vs issues use object_type. "
+            "GitHub: unfiltered source=github counts every indexed document "
+            "(PullRequest, Issue, Repository, Readme, File). That is not a repository census. "
+            "Repository names are the distinct repo tag. PR vs issue vs overview use object_type. "
+            "Open PRs use object_type=PullRequest AND state=open. Merged PRs use merged=true. "
+            "Closed without merging uses state=closed AND merged=false (GitHub state=closed includes merged). "
             "num_files_changed and num_commits are PR tags, not repository counts."
         ),
     }

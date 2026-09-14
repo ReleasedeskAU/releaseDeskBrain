@@ -36,9 +36,14 @@ def test_github_connector_basic(github_connector: GithubConnector) -> None:
     ).documents
     assert len(docs) > 1  # We expect at least one PR and one Issue to exist
 
-    # Test the first document's structure
-    pr_doc = docs[0]
-    issue_doc = docs[-1]
+    by_type = {
+        (doc.metadata or {}).get("object_type"): doc
+        for doc in docs
+        if doc.metadata and doc.metadata.get("object_type")
+    }
+    assert "Repository" in by_type
+    pr_doc = next(doc for doc in docs if (doc.metadata or {}).get("object_type") == "PullRequest")
+    issue_doc = next(doc for doc in docs if (doc.metadata or {}).get("object_type") == "Issue")
 
     # Verify basic document properties
     assert pr_doc.source == DocumentSource.GITHUB

@@ -65,11 +65,17 @@ def test_bitbucket_checkpointed_load(
     for doc in docs:
         assert doc.source == DocumentSource.BITBUCKET
         assert doc.metadata is not None
-        assert doc.metadata.get("object_type") == "PullRequest"
-        assert "id" in doc.metadata
-        assert "state" in doc.metadata
-        assert "title" in doc.metadata
-        assert "updated_on" in doc.metadata
+        assert doc.metadata.get("object_type") in {
+            "PullRequest",
+            "Repository",
+            "Readme",
+            "Commit",
+        }
+        if doc.metadata.get("object_type") == "PullRequest":
+            assert "id" in doc.metadata
+            assert "state" in doc.metadata
+            assert "title" in doc.metadata
+            assert "updated_on" in doc.metadata
 
         # Basic section checks
         assert len(doc.sections) >= 1

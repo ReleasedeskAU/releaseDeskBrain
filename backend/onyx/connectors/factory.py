@@ -1,4 +1,5 @@
 import importlib
+import inspect
 from typing import Any, Type
 
 from sqlalchemy.orm import Session
@@ -105,6 +106,29 @@ def identify_connector_class(
     return connector
 
 
+def _config_for_constructor(
+    connector_class: Type[BaseConnector], config: dict[str, Any]
+) -> dict[str, Any]:
+    """Keep only keys the connector constructor accepts.
+
+    Extra keys stay in the DB row; they must not be splatted into __init__.
+    """
+    signature = inspect.signature(connector_class.__init__)
+    if any(
+        param.kind == inspect.Parameter.VAR_KEYWORD
+        for param in signature.parameters.values()
+    ):
+        return config
+    allowed = {
+        name
+        for name, param in signature.parameters.items()
+        if name != "self"
+        and param.kind
+        in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    }
+    return {key: value for key, value in config.items() if key in allowed}
+
+
 def instantiate_connector(
     db_session: Session,
     source: DocumentSource,
@@ -115,7 +139,9 @@ def instantiate_connector(
 ) -> BaseConnector:
     connector_class = identify_connector_class(source, input_type)
 
-    connector = connector_class(**connector_specific_config)
+    # Saved config may include newer UI keys. Drop names the constructor
+    # does not take so pairing does not 400 on an older connector class.
+    connector = connector_class(**_config_for_constructor(connector_class, connector_specific_config))
 
     if isinstance(connector, CredentialsConnector):
         provider = build_db_credentials_provider(source, credential.id)

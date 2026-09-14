@@ -62,6 +62,7 @@ def build_github_connector(
             repositories=repositories,
             include_prs=True,
             include_issues=True,
+            include_overview=False,
         )
         connector.github_client = mock_github_client
         return connector
