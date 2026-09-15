@@ -19,6 +19,19 @@ MISSING_CONTENTS_READ = (
     "scope on a classic token."
 )
 _CLASSIC_REPO_SCOPES = frozenset({"repo", "public_repo"})
+_EMPTY_REPO_CONTENTS_MESSAGE = "this repository is empty."
+
+
+def github_contents_404_is_empty_repo(data: Any) -> bool:
+    """True only for GitHub's empty-repo contents 404.
+
+    Fine-grained tokens without Contents: Read also 404 with ``Not Found``.
+    That is missing permission, not an empty repository. Does not log ``data``.
+    """
+    if not isinstance(data, dict):
+        return False
+    message = data.get("message")
+    return isinstance(message, str) and message.strip().lower() == _EMPTY_REPO_CONTENTS_MESSAGE
 
 
 def header_value(headers: dict[str, Any] | None, name: str) -> str | None:
@@ -90,9 +103,13 @@ def assert_github_client_repo_read(github_client: Github) -> None:
             "GET", f"/repos/{owner}/{name}/contents/"
         )
     except GithubException as exc:
-        if getattr(exc, "status", None) == 404:
-            return
-        if getattr(exc, "status", None) == 403:
+        status = getattr(exc, "status", None)
+        # GitHub uses 404 for both an empty repo and a token that cannot read contents.
+        if status == 404:
+            if github_contents_404_is_empty_repo(getattr(exc, "data", None)):
+                return
+            raise InsufficientPermissionsError(MISSING_CONTENTS_READ) from exc
+        if status == 403:
             raise InsufficientPermissionsError(MISSING_CONTENTS_READ) from exc
         raise
     content_accepted = header_value(content_headers, "X-Accepted-GitHub-Permissions")

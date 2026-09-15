@@ -7,7 +7,6 @@ from typing import Any, TypeVar
 
 import gitlab
 import pytz
-from gitlab.v4.objects import Project
 
 from onyx.configs.app_configs import (
     GITLAB_CONNECTOR_INCLUDE_CODE_FILES,
@@ -20,6 +19,16 @@ from onyx.connectors.interfaces import (
     LoadConnector,
     PollConnector,
     SecondsSinceUnixEpoch,
+)
+from gitlab.exceptions import GitlabGetError
+from gitlab.v4.objects import Project
+
+from onyx.connectors.gitlab.docs import (
+    MAX_README_CHARS,
+    README_CANDIDATES,
+    map_commit_to_document,
+    map_overview_to_document,
+    map_readme_to_document,
 )
 from onyx.connectors.models import (
     BasicExpertInfo,
@@ -91,12 +100,26 @@ def _convert_merge_request_to_document(mr: Any) -> Document:
         # NOTE: doc_created_at population not yet verified against live data
         doc_created_at=_gitlab_datetime_to_utc(mr.created_at),
         primary_owners=[get_author(mr.author)],
-        metadata={"state": mr.state, "type": "MergeRequest"},
+        metadata={
+            "state": mr.state,
+            "type": "MergeRequest",
+            "object_type": "MergeRequest",
+        },
     )
     return doc
 
 
+def _gitlab_issue_object_type(issue: Any) -> str:
+    """Ask filters GitLab issues via object_type=Issue (same field as GitHub)."""
+    raw = str(getattr(issue, "type", None) or "Issue").strip()
+    if raw.upper() in {"ISSUE", "ISSUE_TYPE_ISSUE", ""}:
+        return "Issue"
+    return raw
+
+
 def _convert_issue_to_document(issue: Any) -> Document:
+    stored_type = issue.type if getattr(issue, "type", None) else "Issue"
+    iid = getattr(issue, "iid", None)
     doc = Document(
         id=issue.web_url,
         sections=[TextSection(link=issue.web_url, text=issue.description or "")],
@@ -106,7 +129,12 @@ def _convert_issue_to_document(issue: Any) -> Document:
         # NOTE: doc_created_at population not yet verified against live data
         doc_created_at=_gitlab_datetime_to_utc(issue.created_at),
         primary_owners=[get_author(issue.author)],
-        metadata={"state": issue.state, "type": issue.type if issue.type else "Issue"},
+        metadata={
+            "state": issue.state,
+            "type": stored_type,
+            "object_type": _gitlab_issue_object_type(issue),
+            **({"key": f"#{iid}"} if iid is not None else {}),
+        },
     )
     return doc
 
@@ -155,20 +183,32 @@ class GitlabConnector(LoadConnector, PollConnector):
         self,
         project_owner: str,
         project_name: str,
+        projects: str | None = None,
         batch_size: int = INDEX_BATCH_SIZE,
         state_filter: str = "all",
         include_mrs: bool = True,
         include_issues: bool = True,
         include_code_files: bool = GITLAB_CONNECTOR_INCLUDE_CODE_FILES,
+        include_overview: bool = True,
+        include_commits: bool = True,
     ) -> None:
         self.project_owner = project_owner
         self.project_name = project_name
+        self._projects = [s.strip() for s in (projects or "").split(",") if s.strip()]
         self.batch_size = batch_size
         self.state_filter = state_filter
         self.include_mrs = include_mrs
         self.include_issues = include_issues
         self.include_code_files = include_code_files
+        self.include_overview = include_overview
+        self.include_commits = include_commits
         self.gitlab_client: gitlab.Gitlab | None = None
+
+    def _project_paths(self) -> list[str]:
+        """Paths to index: explicit list, else the single constructor project."""
+        if self._projects:
+            return self._projects
+        return [f"{self.project_owner}/{self.project_name}"]
 
     def load_credentials(self, credentials: dict[str, Any]) -> dict[str, Any] | None:
         self.gitlab_client = gitlab.Gitlab(
@@ -176,14 +216,75 @@ class GitlabConnector(LoadConnector, PollConnector):
         )
         return None
 
+    def _fetch_readme(self, project: Project, path: str, web_url: str) -> Document | None:
+        """First README candidate on the default branch, or None when missing/binary."""
+        default_branch = project.default_branch
+        if not default_branch:
+            return None
+        for candidate in README_CANDIDATES:
+            try:
+                file_obj = project.files.get(file_path=candidate, ref=default_branch)
+            except GitlabGetError:
+                continue
+            try:
+                text = file_obj.decode().decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+            if not text.strip() or len(text) > MAX_README_CHARS:
+                continue
+            return map_readme_to_document(path, candidate, text, default_branch, web_url)
+        return None
+
     def _fetch_from_gitlab(
         self, start: datetime | None = None, end: datetime | None = None
     ) -> GenerateDocumentsOutput:
         if self.gitlab_client is None:
             raise ConnectorMissingCredentialError("Gitlab")
-        project: Project = self.gitlab_client.projects.get(
-            f"{self.project_owner}/{self.project_name}"
+        for path in self._project_paths():
+            project: Project = self.gitlab_client.projects.get(path)
+            yield from self._fetch_project(project, path, start, end)
+
+    def _fetch_project(
+        self,
+        project: Project,
+        path: str,
+        start: datetime | None,
+        end: datetime | None,
+    ) -> GenerateDocumentsOutput:
+        web_url = getattr(project, "web_url", None) or (
+            f"{self.gitlab_client.url}/{path}" if self.gitlab_client is not None else path
         )
+        default_branch = project.default_branch or ""
+
+        if self.include_overview:
+            overview_batch: list[Document | HierarchyNode] = [
+                map_overview_to_document(
+                    path,
+                    getattr(project, "name", "") or path,
+                    getattr(project, "description", None) or "",
+                    default_branch,
+                    web_url,
+                    str(getattr(project, "visibility", "") or ""),
+                    getattr(project, "last_activity_at", None),
+                )
+            ]
+            readme = self._fetch_readme(project, path, web_url)
+            if readme:
+                overview_batch.append(readme)
+            yield overview_batch
+
+        if self.include_commits and default_branch:
+            commit_kwargs: dict[str, Any] = {
+                "ref_name": default_branch,
+                "iterator": True,
+            }
+            if start is not None:
+                commit_kwargs["since"] = start.isoformat()
+            if end is not None:
+                commit_kwargs["until"] = end.isoformat()
+            commits = project.commits.list(**commit_kwargs)
+            for commit_batch in _batch_gitlab_objects(commits, self.batch_size):
+                yield [map_commit_to_document(commit, path, web_url) for commit in commit_batch]
 
         # Fetch code files
         if self.include_code_files:
@@ -199,13 +300,14 @@ class GitlabConnector(LoadConnector, PollConnector):
                             continue
 
                         if file["type"] == "blob":
+                            owner, _, name = path.rpartition("/")
                             code_doc_batch.append(
                                 _convert_code_to_document(
                                     project,
                                     file,
-                                    self.gitlab_client.url,
-                                    self.project_name,
-                                    self.project_owner,
+                                    self.gitlab_client.url if self.gitlab_client is not None else "",
+                                    name or self.project_name,
+                                    owner or self.project_owner,
                                 )
                             )
                         elif file["type"] == "tree":
@@ -222,42 +324,52 @@ class GitlabConnector(LoadConnector, PollConnector):
                 iterator=True,
             )
 
+            start_utc = start.replace(tzinfo=pytz.UTC) if start is not None else None
+            end_utc = end.replace(tzinfo=pytz.UTC) if end is not None else None
+            stop_mrs = False
             for mr_batch in _batch_gitlab_objects(merge_requests, self.batch_size):
                 mr_doc_batch: list[Document | HierarchyNode] = []
                 for mr in mr_batch:
-                    mr.updated_at = datetime.strptime(
-                        mr.updated_at, "%Y-%m-%dT%H:%M:%S.%f%z"
-                    )
-                    if start is not None and mr.updated_at < start.replace(
-                        tzinfo=pytz.UTC
-                    ):
-                        yield mr_doc_batch
-                        return
-                    if end is not None and mr.updated_at > end.replace(tzinfo=pytz.UTC):
+                    updated = _gitlab_datetime_to_utc(mr.updated_at)
+                    if updated is None:
+                        continue
+                    if start_utc is not None and updated < start_utc:
+                        stop_mrs = True
+                        break
+                    if end_utc is not None and updated > end_utc:
                         continue
                     mr_doc_batch.append(_convert_merge_request_to_document(mr))
-                yield mr_doc_batch
+                if mr_doc_batch:
+                    yield mr_doc_batch
+                if stop_mrs:
+                    break
 
         if self.include_issues:
-            issues = project.issues.list(state=self.state_filter, iterator=True)
-
+            issues = project.issues.list(
+                state=self.state_filter,
+                order_by="updated_at",
+                sort="desc",
+                iterator=True,
+            )
+            start_utc = start.replace(tzinfo=pytz.UTC) if start is not None else None
+            end_utc = end.replace(tzinfo=pytz.UTC) if end is not None else None
+            stop_issues = False
             for issue_batch in _batch_gitlab_objects(issues, self.batch_size):
                 issue_doc_batch: list[Document | HierarchyNode] = []
                 for issue in issue_batch:
-                    issue.updated_at = datetime.strptime(
-                        issue.updated_at, "%Y-%m-%dT%H:%M:%S.%f%z"
-                    )
-                    if start is not None:
-                        start = start.replace(tzinfo=pytz.UTC)
-                        if issue.updated_at < start:
-                            yield issue_doc_batch
-                            return
-                    if end is not None:
-                        end = end.replace(tzinfo=pytz.UTC)
-                        if issue.updated_at > end:
-                            continue
+                    updated = _gitlab_datetime_to_utc(issue.updated_at)
+                    if updated is None:
+                        continue
+                    if start_utc is not None and updated < start_utc:
+                        stop_issues = True
+                        break
+                    if end_utc is not None and updated > end_utc:
+                        continue
                     issue_doc_batch.append(_convert_issue_to_document(issue))
-                yield issue_doc_batch
+                if issue_doc_batch:
+                    yield issue_doc_batch
+                if stop_issues:
+                    break
 
     def load_from_state(self) -> GenerateDocumentsOutput:
         return self._fetch_from_gitlab()

@@ -23,7 +23,9 @@
   update Weighted Risk.
 - GitHub connector rejects a valid token that cannot read repositories.
   Classic PATs need ``repo`` or ``public_repo``; fine-grained PATs need
-  Contents: Read. The error names that missing scope/permission.
+  Contents: Read. A contents ``404 Not Found`` is missing permission;
+  only GitHub's empty-repository message is allowed through. The error
+  names that missing scope/permission.
 
 ### Fixed
 

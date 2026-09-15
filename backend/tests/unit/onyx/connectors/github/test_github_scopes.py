@@ -5,10 +5,9 @@ from github.GithubException import GithubException
 
 from onyx.connectors.exceptions import InsufficientPermissionsError
 from onyx.connectors.github.scopes import (
-    MISSING_CONTENTS_READ,
-    MISSING_REPO_SCOPE,
     accepted_permissions_include_contents_read,
     assert_github_client_repo_read,
+    github_contents_404_is_empty_repo,
     parse_oauth_scopes,
 )
 
@@ -51,5 +50,28 @@ def test_fine_grained_missing_contents_read() -> None:
     ]
     with pytest.raises(InsufficientPermissionsError, match="Contents \\(read\\)"):
         assert_github_client_repo_read(client)
-    assert MISSING_CONTENTS_READ
-    assert MISSING_REPO_SCOPE
+
+
+def test_github_contents_404_is_empty_repo() -> None:
+    assert github_contents_404_is_empty_repo({"message": "This repository is empty."}) is True
+    assert github_contents_404_is_empty_repo({"message": "Not Found"}) is False
+    assert github_contents_404_is_empty_repo(None) is False
+
+
+def test_fine_grained_contents_404_not_found() -> None:
+    client = MagicMock()
+    client.requester.requestJsonAndCheck.side_effect = [
+        ({"X-Accepted-GitHub-Permissions": "metadata=read"}, [{"full_name": "acme/app"}]),
+        GithubException(404, {"message": "Not Found"}, {}),
+    ]
+    with pytest.raises(InsufficientPermissionsError, match="Contents \\(read\\)"):
+        assert_github_client_repo_read(client)
+
+
+def test_fine_grained_empty_repo_contents_404() -> None:
+    client = MagicMock()
+    client.requester.requestJsonAndCheck.side_effect = [
+        ({"X-Accepted-GitHub-Permissions": "metadata=read"}, [{"full_name": "acme/app"}]),
+        GithubException(404, {"message": "This repository is empty."}, {}),
+    ]
+    assert_github_client_repo_read(client)

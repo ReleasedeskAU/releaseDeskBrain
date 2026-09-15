@@ -21,6 +21,8 @@ def gitlab_connector(
         include_mrs=True,
         include_issues=True,
         include_code_files=True,  # Include code files in the test
+        include_overview=False,
+        include_commits=False,
     )
     # Ensure GITLAB_ACCESS_TOKEN and optionally GITLAB_URL are set in the environment
     gitlab_url = os.environ.get("GITLAB_URL", "https://gitlab.com")
