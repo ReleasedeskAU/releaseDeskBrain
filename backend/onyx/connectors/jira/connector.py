@@ -40,11 +40,13 @@ from onyx.connectors.interfaces import (
 from onyx.connectors.jira.access import get_project_permissions
 from onyx.connectors.jira.utils import (
     JIRA_CLOUD_API_VERSION,
+    CustomFieldExtractor,
     JiraFieldStats,
     best_effort_get_field_from_issue,
     build_jira_client,
     build_jira_url,
     changelog_is_truncated,
+    extract_populated_custom_field_lines,
     fetch_all_jira_changelog,
     get_comment_strs,
     jira_changelog_payload,
@@ -130,7 +132,11 @@ def _perform_jql_search(
     nextPageToken: str | None = None,
     ids_done: bool = False,
 ) -> Iterable[Issue]:
-    """
+    """Search Jira with this token's JQL.
+
+    Restricted issues never appear here: Jira only returns issues this token can
+    read. Do not add a post-index ACL or tenant-specific restricted-key lists.
+
     The caller should expect
     a) this function returns an iterable of issues of length 0 < len(issues) <= max_results.
        - caveat; if all_issue_ids is provided, the iterable will be the size of some sub-list.
@@ -724,7 +730,12 @@ def process_jira_issue(
     parent_hierarchy_raw_node_id: str | None = None,
     field_stats: JiraFieldStats | None = None,
     jira_client: JIRA | None = None,
+    custom_field_names: dict[str, str] | None = None,
 ) -> Document | None:
+    """Turn one Jira issue into an index document, or None to skip (label/size).
+
+    Restricted issues never reach this function: JQL only returns what the token can read.
+    """
     issue_key = jira_issue_key(issue)
     if labels_to_skip:
         issue_labels = jira_label_values(
@@ -762,6 +773,13 @@ def process_jira_issue(
     ticket_content = f"{description}\n" + "\n".join(
         [f"Comment: {comment}" for comment in comments if comment]
     )
+    custom_field_lines = (
+        extract_populated_custom_field_lines(issue, custom_field_names)
+        if custom_field_names
+        else []
+    )
+    if custom_field_lines:
+        ticket_content = ticket_content + "\n" + "\n".join(custom_field_lines)
 
     if len(ticket_content.encode("utf-8")) > JIRA_CONNECTOR_MAX_TICKET_SIZE:
         logger.info(
@@ -783,6 +801,8 @@ def process_jira_issue(
     page_url = build_jira_url(jira_base_url, issue_key)
     metadata_dict, people = _build_jira_metadata(issue, field_stats)
     _put_changelog_metadata(metadata_dict, field_stats, issue_key, issue, jira_client)
+    if custom_field_lines:
+        metadata_dict["custom_fields"] = custom_field_lines
     if field_stats is not None:
         field_stats.issues_processed += 1
 
@@ -825,7 +845,8 @@ class JiraConnector(
         batch_size: int = INDEX_BATCH_SIZE,
         # if a ticket has one of the labels specified in this list, we will just
         # skip it. This is generally used to avoid indexing extra sensitive
-        # tickets.
+        # tickets. Issue-level Jira visibility is already enforced by JQL —
+        # restricted issues are never fetched.
         labels_to_skip: list[str] = JIRA_CONNECTOR_LABELS_TO_SKIP,
         # Custom JQL query to filter Jira issues
         jql_query: str | None = None,
@@ -846,6 +867,7 @@ class JiraConnector(
         self._jira_client: JIRA | None = None
         self._project_permissions_cache: dict[str, Any] = {}
         self._field_stats = JiraFieldStats()
+        self._custom_field_names: dict[str, str] | None = None
 
     @property
     def comment_email_blacklist(self) -> tuple:
@@ -856,6 +878,18 @@ class JiraConnector(
         if self._jira_client is None:
             raise ConnectorMissingCredentialError("Jira")
         return self._jira_client
+
+    def _cached_custom_field_names(self) -> dict[str, str]:
+        """Field id → display name from this Jira site. Empty on catalog fetch failure."""
+        if self._custom_field_names is None:
+            try:
+                self._custom_field_names = CustomFieldExtractor.get_all_custom_fields(
+                    self.jira_client
+                )
+            except Exception:
+                logger.exception("Failed loading Jira custom field catalog")
+                self._custom_field_names = {}
+        return self._custom_field_names
 
     @property
     def quoted_jira_project(self) -> str:
@@ -1132,6 +1166,7 @@ class JiraConnector(
                     parent_hierarchy_raw_node_id=parent_hierarchy_raw_node_id,
                     field_stats=self._field_stats,
                     jira_client=self.jira_client,
+                    custom_field_names=self._cached_custom_field_names(),
                 ):
                     # Add permission information to the document if requested
                     if include_permissions:

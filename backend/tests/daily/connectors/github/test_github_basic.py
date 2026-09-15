@@ -19,6 +19,7 @@ def github_connector(
         repositories="documentation",
         include_prs=True,
         include_issues=True,
+        include_commits=False,
     )
     connector.load_credentials(
         {

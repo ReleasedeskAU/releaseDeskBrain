@@ -41,6 +41,7 @@ def _make_connector(include_issues: bool = False) -> GithubConnector:
         include_prs=True,
         include_issues=include_issues,
         include_overview=False,
+        include_commits=False,
     )
     connector.github_client = MagicMock()
     return connector

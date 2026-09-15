@@ -206,6 +206,7 @@ def test_connector_overview_stage_emits_repo_and_readme() -> None:
         include_issues=False,
         include_files=False,
         include_overview=True,
+        include_commits=False,
     )
     mock_client = MagicMock()
     mock_repo = MagicMock()

@@ -7,6 +7,7 @@ from io import BytesIO
 from typing import Any, cast
 
 from github import Github, RateLimitExceededException, Repository
+from github.Commit import Commit
 from github.GithubException import GithubException, UnknownObjectException
 from github.Issue import Issue
 from github.NamedUser import NamedUser
@@ -26,6 +27,11 @@ from onyx.connectors.exceptions import (
     UnexpectedValidationError,
     ValidationError,
 )
+from onyx.connectors.github.commits import (
+    commit_datetime,
+    map_commit_to_document,
+    slim_commit_document,
+)
 from onyx.connectors.github.models import SerializedRepository
 from onyx.connectors.github.overview import (
     RepoOverviewFacts,
@@ -34,6 +40,7 @@ from onyx.connectors.github.overview import (
     map_readme_to_document,
     slim_overview_documents,
 )
+from onyx.connectors.github.scopes import assert_github_client_repo_read
 from onyx.connectors.github.rate_limit_utils import sleep_after_rate_limit_exception
 from onyx.connectors.github.utils import (
     deserialize_repository,
@@ -116,6 +123,9 @@ GITHUB_PATH_DENYLIST = {
 GITHUB_MAX_FILE_SIZE_BYTES = 1_000_000
 # Number of files emitted per checkpoint batch in the FILES stage.
 FILE_BATCH_SIZE = 100
+COMMIT_BATCH_SIZE = 20
+MAX_COMMIT_BRANCHES = 200
+MAX_SEEN_COMMIT_SHAS = 20_000
 
 _GITHUB_EMPTY_REPOSITORY_TREE_STATUS = 409
 _GITHUB_EMPTY_REPOSITORY_TREE_MESSAGE = "Git Repository is empty."
@@ -568,6 +578,7 @@ class GithubConnectorStage(Enum):
     PRS = "prs"
     ISSUES = "issues"
     FILES = "files"
+    COMMITS = "commits"
 
 
 class GithubConnectorCheckpoint(ConnectorCheckpoint):
@@ -584,6 +595,12 @@ class GithubConnectorCheckpoint(ConnectorCheckpoint):
     # longer matches (connector edited, default branch changed) is re-listed.
     file_paths_branch: str | None = None
 
+    # COMMITS stage: walk every branch, emit each SHA once.
+    commit_branch_names: list[str] | None = None
+    commit_branch_index: int = 0
+    commit_page_offset: int = 0
+    seen_commit_shas: list[str] | None = None
+
     # Used for the fallback cursor-based pagination strategy
     num_retrieved: int
     cursor_url: str | None = None
@@ -598,6 +615,10 @@ class GithubConnectorCheckpoint(ConnectorCheckpoint):
         self.cursor_url = None
         self.file_paths = None
         self.file_paths_branch = None
+        self.commit_branch_names = None
+        self.commit_branch_index = 0
+        self.commit_page_offset = 0
+        self.seen_commit_shas = None
 
 
 def make_cursor_url_callback(
@@ -627,6 +648,7 @@ class GithubConnector(
         include_issues: bool = False,
         include_files: bool = False,
         include_overview: bool = True,
+        include_commits: bool = True,
         branch: str | None = None,
     ) -> None:
         self.repo_owner = repo_owner
@@ -637,6 +659,8 @@ class GithubConnector(
         self.include_files = include_files
         # Repo description, README, branch/commit/PR snapshot counts, contributors.
         self.include_overview = include_overview
+        # Unique SHAs from every branch: message, file names, line stats (no diffs).
+        self.include_commits = include_commits
         # Branch to index files from; None means each repo's default branch.
         self.branch = (branch or "").strip() or None
         self.github_client: Github | None = None
@@ -1027,6 +1051,187 @@ class GithubConnector(
                 exception=e,
             )
 
+    def _get_commit_detail(
+        self, repo: Repository.Repository, sha: str, attempt_num: int = 0
+    ) -> Commit:
+        """GET /commits/{sha} for files and stats. Does not need the patch field."""
+        if attempt_num > _MAX_NUM_RATE_LIMIT_RETRIES:
+            raise RuntimeError(
+                "Re-tried fetching commit detail too many times. "
+                "Something is going wrong with fetching objects from Github"
+            )
+        assert self.github_client is not None
+        try:
+            return repo.get_commit(sha)
+        except RateLimitExceededException:
+            sleep_after_rate_limit_exception(self.github_client)
+            return self._get_commit_detail(repo, sha, attempt_num + 1)
+
+    def _list_commit_branches(self, repo: Repository.Repository) -> list[str]:
+        """Branch names to walk. Default branch first so shared SHAs attach to it."""
+        names: list[str] = []
+        try:
+            for i, branch in enumerate(repo.get_branches()):
+                if i >= MAX_COMMIT_BRANCHES:
+                    break
+                name = getattr(branch, "name", None)
+                if isinstance(name, str) and name.strip():
+                    names.append(name.strip())
+        except GithubException as e:
+            logger.warning("Could not list branches for commits on %s: %s", repo.full_name, e)
+        default = self._resolve_branch(repo)
+        ordered: list[str] = []
+        if default:
+            ordered.append(default)
+        for name in names:
+            if name not in ordered:
+                ordered.append(name)
+        return ordered or ([default] if default else [])
+
+    def _commit_history_kwargs(
+        self, branch: str, start: datetime | None, end: datetime | None
+    ) -> dict[str, Any]:
+        """List args for one branch. since/until are the connector sync window."""
+        kwargs: dict[str, Any] = {"sha": branch}
+        if start is not None:
+            kwargs["since"] = start
+        if end is not None:
+            kwargs["until"] = end
+        return kwargs
+
+    def _get_branch_commit_page(
+        self,
+        repo: Repository.Repository,
+        branch: str,
+        page: int,
+        start: datetime | None,
+        end: datetime | None,
+    ) -> list[Commit] | None:
+        """One GitHub commit page, or None when this branch has no history."""
+        kwargs = self._commit_history_kwargs(branch, start, end)
+        try:
+            return list(repo.get_commits(**kwargs).get_page(page))
+        except RateLimitExceededException:
+            assert self.github_client is not None
+            sleep_after_rate_limit_exception(self.github_client)
+            return list(repo.get_commits(**kwargs).get_page(page))
+        except GithubException as e:
+            if e.status in (_GITHUB_EMPTY_REPOSITORY_TREE_STATUS, 404):
+                return None
+            raise
+
+    def _emit_commit_document(
+        self,
+        repo: Repository.Repository,
+        commit: Commit,
+        sha: str,
+        branch: str,
+        is_slim: bool,
+        repo_external_access: ExternalAccess | None,
+    ) -> Generator[Document | ConnectorFailure, None, None]:
+        """Yield one commit document. GET /commits/{sha} is required for file names."""
+        try:
+            if is_slim:
+                yield slim_commit_document(repo.full_name, sha, repo_external_access)
+                return
+            detail = self._get_commit_detail(repo, sha)
+            yield map_commit_to_document(
+                detail,
+                repo.full_name,
+                repo.html_url,
+                branch,
+                repo_external_access,
+            )
+        except Exception as e:
+            error_msg = f"Error converting commit {sha} to document: {e}"
+            logger.exception(error_msg)
+            yield ConnectorFailure(
+                failed_document=DocumentFailure(
+                    document_id=sha,
+                    document_link=getattr(commit, "html_url", None),
+                ),
+                failure_message=error_msg,
+                exception=e,
+            )
+
+    def _fetch_repo_commits(
+        self,
+        repo: Repository.Repository,
+        checkpoint: GithubConnectorCheckpoint,
+        start: datetime | None,
+        end: datetime | None,
+        is_slim: bool,
+        repo_external_access: ExternalAccess | None,
+    ) -> Generator[Document | ConnectorFailure, None, bool]:
+        """Emit one batch of unique-SHA commits. True if more remain for this repo."""
+        if checkpoint.commit_branch_names is None:
+            checkpoint.commit_branch_names = self._list_commit_branches(repo)
+            checkpoint.commit_branch_index = 0
+            checkpoint.commit_page_offset = 0
+            checkpoint.seen_commit_shas = []
+            checkpoint.curr_page = 0
+        names = checkpoint.commit_branch_names
+        if checkpoint.commit_branch_index >= len(names):
+            return False
+        branch = names[checkpoint.commit_branch_index]
+        page = self._get_branch_commit_page(
+            repo, branch, checkpoint.curr_page, start, end
+        )
+        if page is None or not page:
+            checkpoint.commit_branch_index += 1
+            checkpoint.curr_page = 0
+            checkpoint.commit_page_offset = 0
+            return checkpoint.commit_branch_index < len(names)
+        seen = set(checkpoint.seen_commit_shas or [])
+        emitted = 0
+        stop_branch = False
+        hit_sha_cap = False
+        offset = checkpoint.commit_page_offset
+        for i, commit in enumerate(page):
+            if i < offset:
+                continue
+            sha = str(getattr(commit, "sha", "") or "")
+            if not sha:
+                continue
+            dated = commit_datetime(commit)
+            if start is not None and dated is not None and dated < start:
+                stop_branch = True
+                break
+            if end is not None and dated is not None and dated > end:
+                continue
+            if sha in seen:
+                continue
+            seen.add(sha)
+            if len(seen) > MAX_SEEN_COMMIT_SHAS:
+                logger.warning(
+                    "Commit SHA cap reached for %s; remaining unique commits are skipped",
+                    repo.full_name,
+                )
+                hit_sha_cap = True
+                break
+            yield from self._emit_commit_document(
+                repo, commit, sha, branch, is_slim, repo_external_access
+            )
+            emitted += 1
+            if emitted >= COMMIT_BATCH_SIZE:
+                checkpoint.commit_page_offset = i + 1
+                checkpoint.seen_commit_shas = list(seen)
+                return True
+        checkpoint.seen_commit_shas = list(seen)
+        if hit_sha_cap:
+            checkpoint.commit_branch_index = len(names)
+            checkpoint.curr_page = 0
+            checkpoint.commit_page_offset = 0
+            return False
+        if stop_branch:
+            checkpoint.commit_branch_index += 1
+            checkpoint.curr_page = 0
+            checkpoint.commit_page_offset = 0
+        else:
+            checkpoint.curr_page += 1
+            checkpoint.commit_page_offset = 0
+        return checkpoint.commit_branch_index < len(names)
+
     def _fetch_from_github(
         self,
         checkpoint: GithubConnectorCheckpoint,
@@ -1037,6 +1242,10 @@ class GithubConnector(
     ) -> Generator[Document | ConnectorFailure, None, GithubConnectorCheckpoint]:
         if self.github_client is None:
             raise ConnectorMissingCredentialError("GitHub")
+
+        if not getattr(self, "_repo_read_checked", False):
+            assert_github_client_repo_read(self.github_client)
+            self._repo_read_checked = True
 
         checkpoint = copy.deepcopy(checkpoint)
 
@@ -1271,7 +1480,24 @@ class GithubConnector(
             if has_more_file_batches:
                 return checkpoint
 
-        # files complete (or disabled) -> fall through to next repo
+        if checkpoint.stage in (
+            GithubConnectorStage.PRS,
+            GithubConnectorStage.ISSUES,
+            GithubConnectorStage.FILES,
+        ):
+            checkpoint.stage = GithubConnectorStage.COMMITS
+            checkpoint.reset()
+            if self.include_commits:
+                return checkpoint
+
+        if self.include_commits and checkpoint.stage == GithubConnectorStage.COMMITS:
+            has_more_commits = yield from self._fetch_repo_commits(
+                repo, checkpoint, start, end, is_slim, repo_external_access
+            )
+            if has_more_commits:
+                return checkpoint
+
+        # commits complete (or disabled) -> next repo
 
         checkpoint.has_more = len(checkpoint.cached_repo_ids) > 0
         if checkpoint.cached_repo_ids:
@@ -1419,11 +1645,15 @@ class GithubConnector(
             or self.include_issues
             or self.include_files
             or self.include_overview
+            or self.include_commits
         ):
             raise ConnectorValidationError(
                 "Invalid connector settings: at least one of pull requests, "
-                "issues, files, or repository overview must be selected for indexing."
+                "issues, files, repository overview, or commits must be selected "
+                "for indexing."
             )
+
+        assert_github_client_repo_read(self.github_client)
 
         try:
             if self.repositories:
@@ -1528,7 +1758,9 @@ class GithubConnector(
                 )
             elif e.status == 403:
                 raise InsufficientPermissionsError(
-                    "Your GitHub token does not have sufficient permissions for this repository (HTTP 403)."
+                    "This GitHub token is valid but is missing required permission: "
+                    "Contents (read). Grant Contents: Read on a fine-grained token, "
+                    "or the repo (or public_repo) scope on a classic token (HTTP 403)."
                 )
             elif e.status == 404:
                 if self.repositories:

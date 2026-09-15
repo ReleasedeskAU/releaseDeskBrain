@@ -65,6 +65,15 @@ MAX_AND_FILTERS = 5
 if not ALLOWED_TAG_KEYS.isdisjoint(PII_TAG_KEYS):
     raise RuntimeError("PII tag keys must not be queryable")
 
+# Returned on document-by-key only — not count/filter fields.
+DISPLAY_TAG_KEYS = frozenset({"custom_fields"})
+BY_KEY_TAG_KEYS = ALLOWED_TAG_KEYS | DISPLAY_TAG_KEYS
+
+if not DISPLAY_TAG_KEYS.isdisjoint(PII_TAG_KEYS):
+    raise RuntimeError("PII tag keys must not be returned")
+if not DISPLAY_TAG_KEYS.isdisjoint(ALLOWED_TAG_KEYS):
+    raise RuntimeError("Display-only tags must not be count/filter fields")
+
 
 class DocumentCountError(ValueError):
     """Rejected count arguments (unknown field, empty value, etc.)."""
@@ -155,10 +164,11 @@ def queryable_fields() -> dict[str, object]:
             "Open = new + indeterminate. Tickets missing status_category are not classified. "
             "Emails and other PII fields are not listed and cannot be queried. "
             "GitHub: unfiltered source=github counts every indexed document "
-            "(PullRequest, Issue, Repository, Readme, File). That is not a repository census. "
-            "Repository names are the distinct repo tag. PR vs issue vs overview use object_type. "
+            "(PullRequest, Issue, Repository, Readme, Commit, File). That is not a repository census. "
+            "Repository names are the distinct repo tag. PR vs issue vs overview vs commit use object_type. "
             "Open PRs use object_type=PullRequest AND state=open. Merged PRs use merged=true. "
             "Closed without merging uses state=closed AND merged=false (GitHub state=closed includes merged). "
+            "Commits use object_type=Commit (message, file names, line stats; no diffs). "
             "num_files_changed and num_commits are PR tags, not repository counts."
         ),
     }

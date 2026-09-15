@@ -342,6 +342,26 @@ export const connectorConfigs: Record<
       },
       {
         type: "checkbox",
+        query: "Include repository overview?",
+        label: "Include repository overview?",
+        name: "include_overview",
+        description:
+          "Index README, description, branch names, contributors, and snapshot counts",
+        optional: true,
+        default: true,
+      },
+      {
+        type: "checkbox",
+        query: "Include commits?",
+        label: "Include commits?",
+        name: "include_commits",
+        description:
+          "Index each unique commit on all branches: message, file names, and line stats. Diffs are not stored.",
+        optional: true,
+        default: true,
+      },
+      {
+        type: "checkbox",
         query: "Include documents?",
         label: "Include Documents?",
         name: "include_files",

@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from onyx.configs.constants import DocumentSource
 from onyx.db.document_count import (
-    ALLOWED_TAG_KEYS,
+    BY_KEY_TAG_KEYS,
     DocumentCountError,
     MAX_CATALOG_ROWS,
     MAX_DOCUMENT_KEY_CHARS,
@@ -452,12 +452,12 @@ def _allowlisted_fields(db_session: Session, document_id: str) -> dict[str, str 
         .select_from(Document__Tag)
         .join(Tag, Tag.id == Document__Tag.tag_id)
         .where(Document__Tag.document_id == document_id)
-        .where(Tag.tag_key.in_(ALLOWED_TAG_KEYS))
+        .where(Tag.tag_key.in_(BY_KEY_TAG_KEYS))
         .order_by(Tag.tag_key, Tag.tag_value)
     )
     fields: dict[str, str | list[str]] = {}
     for tag_key, tag_value, is_list in db_session.execute(stmt):
-        if tag_key in PII_TAG_KEYS or tag_key not in ALLOWED_TAG_KEYS:
+        if tag_key in PII_TAG_KEYS or tag_key not in BY_KEY_TAG_KEYS:
             continue
         _append_field(fields, tag_key, tag_value, bool(is_list))
     return fields
@@ -466,7 +466,7 @@ def _allowlisted_fields(db_session: Session, document_id: str) -> dict[str, str 
 def _append_field(
     fields: dict[str, str | list[str]], tag_key: str, tag_value: str, is_list: bool
 ) -> None:
-    if not is_list and tag_key != "labels":
+    if not is_list and tag_key != "labels" and tag_key != "custom_fields":
         fields[tag_key] = tag_value
         return
     current = fields.get(tag_key)

@@ -3,6 +3,8 @@
 from onyx.configs.constants import DocumentSource
 from onyx.db.document_count import (
     ALLOWED_TAG_KEYS,
+    BY_KEY_TAG_KEYS,
+    DISPLAY_TAG_KEYS,
     DocumentCountError,
     PII_TAG_KEYS,
     escape_ilike_pattern,
@@ -91,6 +93,12 @@ def test_pii_fields_are_never_queryable() -> None:
     assert "num_commits" in fields
     assert "state" in fields
     assert "merged" in fields
+    assert "custom_fields" not in fields
+    with pytest.raises(DocumentCountError):
+        parse_filter_field("custom_fields")
+    assert DISPLAY_TAG_KEYS == frozenset({"custom_fields"})
+    assert "custom_fields" in BY_KEY_TAG_KEYS
+    assert "custom_fields" not in ALLOWED_TAG_KEYS
     assert field_uses_contains_match("state") is False
     assert field_uses_contains_match("merged") is False
     assert field_uses_contains_match("repo") is False

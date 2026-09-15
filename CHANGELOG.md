@@ -4,12 +4,26 @@
 
 ### Added
 
+- Jira connector indexes populated custom fields (site field name + value)
+  into ticket text and ``custom_fields`` metadata. Rank / lexorank is skipped.
+  Field names come from the Jira field catalog — not a hardcoded tenant list.
+  ``custom_fields`` is returned on document-by-key and is not a count/filter field.
+  Restricted issues are never fetched: JQL only returns what the token can read.
+
 - GitHub connector indexes a repository overview (description, default-branch
   commit count, branch names, contributors, open / merged / closed-without-merge
   PR snapshot counts, last-commit additions/deletions) and the README. Closed
   without merging uses GraphQL ``CLOSED`` or list ``merged_at``, not REST
   ``state=closed`` (which includes merged). Ask can filter PRs by `state` and
   `merged`.
+- GitHub connector indexes one document per unique commit SHA across all
+  branches (message, files touched, lines added/removed, file names). Diffs
+  (patch) are never stored. Same SHA on two branches is one document. Ask
+  filters with ``object_type=Commit``. This is Ask context only and does not
+  update Weighted Risk.
+- GitHub connector rejects a valid token that cannot read repositories.
+  Classic PATs need ``repo`` or ``public_repo``; fine-grained PATs need
+  Contents: Read. The error names that missing scope/permission.
 
 ### Fixed
 

@@ -63,6 +63,7 @@ def build_github_connector(
             include_prs=True,
             include_issues=True,
             include_overview=False,
+            include_commits=False,
         )
         connector.github_client = mock_github_client
         return connector
@@ -425,7 +426,7 @@ def test_load_from_checkpoint_with_issues_only(
         (
             403,
             InsufficientPermissionsError,
-            "Your GitHub token does not have sufficient permissions",
+            "missing required permission: Contents (read)",
         ),
         (
             404,

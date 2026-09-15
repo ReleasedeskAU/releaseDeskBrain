@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, List
@@ -778,15 +779,31 @@ class CustomFieldExtractor:
         Process a custom field value to a string
         """
         try:
+            if value is None:
+                return ""
             if isinstance(value, str):
                 return value
+            elif isinstance(value, bool):
+                return "true" if value else "false"
+            elif isinstance(value, (int, float)):
+                return str(value)
             elif isinstance(value, CustomFieldOption):
                 return value.value
             elif isinstance(value, User):
                 return value.displayName
+            elif isinstance(value, dict):
+                for key in ("value", "name", "displayName"):
+                    inner = value.get(key)
+                    if inner not in (None, ""):
+                        return CustomFieldExtractor._process_custom_field_value(inner)
+                return ""
             elif isinstance(value, List):
                 return " ".join(
-                    [CustomFieldExtractor._process_custom_field_value(v) for v in value]
+                    [
+                        part
+                        for v in value
+                        if (part := CustomFieldExtractor._process_custom_field_value(v))
+                    ]
                 )
             else:
                 return str(value)
@@ -831,6 +848,49 @@ class CustomFieldExtractor:
             field["id"]: field["name"] for field in fields if field["custom"] is True
         }
         return fields_dct
+
+
+# Rank is Jira Software's board order, not a tenant-named estimate field.
+_SKIP_CUSTOM_FIELD_NAMES = frozenset({"rank"})
+_LEXORANK_VALUE = re.compile(r"^\d+\|")
+_CUSTOM_FIELD_MAX_CHARS = 250
+
+
+def extract_populated_custom_field_lines(
+    issue: Issue,
+    custom_field_names: dict[str, str],
+    max_value_length: int = _CUSTOM_FIELD_MAX_CHARS,
+) -> list[str]:
+    """Name: value lines for populated custom fields.
+
+    Uses issue.raw["fields"] when present so MagicMock / bulk-fetch payloads work.
+    Skips Rank and lexorank board-order values. Does not guess tenant field names.
+
+    Returns:
+        Display lines such as ``Story point estimate: 13``. Empty when none apply.
+    """
+    raw_fields: dict[str, Any] = {}
+    raw = getattr(issue, "raw", None)
+    if isinstance(raw, dict):
+        maybe = raw.get("fields")
+        if isinstance(maybe, dict):
+            raw_fields = maybe
+
+    lines: list[str] = []
+    for field_id, name in custom_field_names.items():
+        label = (name or "").strip()
+        if not field_id or not label or label.lower() in _SKIP_CUSTOM_FIELD_NAMES:
+            continue
+        value = raw_fields.get(field_id) if field_id in raw_fields else None
+        if value is None and hasattr(issue, "fields"):
+            value = getattr(issue.fields, field_id, None)
+        processed = CustomFieldExtractor._process_custom_field_value(value).strip()
+        if not processed or _LEXORANK_VALUE.match(processed):
+            continue
+        if len(processed) > max_value_length:
+            processed = processed[:max_value_length]
+        lines.append(f"{label}: {processed}")
+    return lines
 
 
 class CommonFieldExtractor:

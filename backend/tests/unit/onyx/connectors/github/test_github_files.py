@@ -126,6 +126,7 @@ def _build_connector(
         include_issues=False,
         include_files=include_files,
         include_overview=False,
+        include_commits=False,
         branch=branch,
     )
     connector.github_client = mock_github_client
@@ -498,6 +499,7 @@ def test_prs_disabled_404_does_not_crash_files(
         include_issues=False,
         include_files=True,
         include_overview=False,
+        include_commits=False,
     )
     connector.github_client = mock_github_client
 
@@ -533,6 +535,7 @@ def test_files_paginated_with_issues_enabled_no_stage_regression(
         include_issues=True,
         include_files=True,
         include_overview=False,
+        include_commits=False,
     )
     connector.github_client = mock_github_client
 
