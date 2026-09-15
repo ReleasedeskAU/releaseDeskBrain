@@ -108,7 +108,7 @@
   },
   "devDependencies": {
     "@formatjs/icu-messageformat-parser": "^3.5.17",
-    "@oxlint/plugins": "^1.71.0",
+    "@oxlint/plugins": "^1.80.0",
     "@playwright/test": "^1.39.0",
     "@storybook/addon-docs": "10.5.0",
     "@storybook/addon-mcp": "^0.7.0",
