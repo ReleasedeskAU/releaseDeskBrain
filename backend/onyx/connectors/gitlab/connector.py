@@ -67,12 +67,53 @@ def get_author(author: Any) -> BasicExpertInfo:
     # GitLab masks the `name` field as "****" for blocked users and as an
     # anti-scraping measure on free-tier public projects. Fall back to
     # `username` so we surface a usable identifier instead.
-    name = author.get("name")
-    if not name or name == "****":
-        name = author.get("username")
-    return BasicExpertInfo(
-        display_name=name,
-    )
+    return BasicExpertInfo(display_name=_person_display_name(author))
+
+
+def _person_display_name(person: Any) -> str | None:
+    """Visible GitLab name, or None when missing. Never uses email."""
+    if person is None:
+        return None
+    if isinstance(person, dict):
+        name = person.get("name")
+        username = person.get("username")
+    else:
+        name = getattr(person, "name", None)
+        username = getattr(person, "username", None)
+    if name and str(name) != "****":
+        return str(name)
+    if username:
+        return str(username)
+    return None
+
+
+def _people_names(people: Any) -> list[str]:
+    """Display names from a GitLab assignees/reviewers list."""
+    if not people:
+        return []
+    names: list[str] = []
+    for person in people:
+        name = _person_display_name(person)
+        if name:
+            names.append(name)
+    return names
+
+
+def _label_names(labels: Any) -> list[str]:
+    """GitLab REST labels are strings; some clients return objects with name."""
+    if not labels:
+        return []
+    names: list[str] = []
+    for label in labels:
+        if isinstance(label, str):
+            text = label.strip()
+        elif isinstance(label, dict):
+            text = str(label.get("name") or "").strip()
+        else:
+            text = str(getattr(label, "name", "") or "").strip()
+        if text:
+            names.append(text)
+    return names
 
 
 def _gitlab_datetime_to_utc(value: Any) -> datetime | None:
@@ -85,26 +126,103 @@ def _gitlab_datetime_to_utc(value: Any) -> datetime | None:
     """
     if value is None:
         return None
-    if isinstance(value, datetime):
-        return datetime_to_utc(value)
-    return time_str_to_utc(value)
+    try:
+        if isinstance(value, datetime):
+            return datetime_to_utc(value)
+        return time_str_to_utc(str(value))
+    except (ValueError, TypeError, OverflowError):
+        return None
 
 
-def _convert_merge_request_to_document(mr: Any) -> Document:
+def _date_tag(value: Any) -> str | None:
+    """ISO timestamp for Ask date tags, or YYYY-MM-DD when that is all GitLab sent."""
+    if value is None or value == "":
+        return None
+    parsed = _gitlab_datetime_to_utc(value)
+    if parsed is not None:
+        return parsed.isoformat()
+    text = str(value).strip()
+    return text or None
+
+
+def _compact_metadata(raw: dict[str, Any]) -> dict[str, str | list[str]]:
+    """Drop empty tags so Ask reports missing fields as untagged, not invented."""
+    out: dict[str, str | list[str]] = {}
+    for key, value in raw.items():
+        if value is None or value == "" or value == []:
+            continue
+        if isinstance(value, list):
+            items = [str(item) for item in value if item not in (None, "")]
+            if items:
+                out[key] = items
+        else:
+            out[key] = str(value)
+    return out
+
+
+def _gitlab_catalog_tags(
+    *,
+    state: Any,
+    object_type: str,
+    stored_type: str,
+    project_path: str,
+    iid: Any,
+    author: Any,
+    assignees: Any,
+    labels: Any,
+    created_at: Any,
+    updated_at: Any,
+    due_date: Any = None,
+    merged: Any = None,
+) -> dict[str, str | list[str]]:
+    """Ask list fields from GitLab REST attributes. No priority — GitLab has none."""
+    state_text = str(state).strip() if state else ""
+    iid_text = f"#{iid}" if iid is not None and str(iid) != "" else None
+    return _compact_metadata(
+        {
+            "state": state_text,
+            # Same GitLab state on `status` so list_documents_matching can project it.
+            "status": state_text,
+            "type": stored_type,
+            "object_type": object_type,
+            "key": iid_text,
+            "project": project_path,
+            "reporter": _person_display_name(author),
+            "assignee": _people_names(assignees),
+            "labels": _label_names(labels),
+            "created": _date_tag(created_at),
+            "updated": _date_tag(updated_at),
+            "duedate": _date_tag(due_date),
+            "merged": merged,
+        }
+    )
+
+
+def _convert_merge_request_to_document(mr: Any, project_path: str) -> Document:
+    """Index one merge request. Tags opened/closed/merged from GitLab `state`."""
+    owners = [get_author(mr.author)] if getattr(mr, "author", None) else []
+    merged = getattr(mr, "merged_at", None) is not None or str(getattr(mr, "state", "")).lower() == "merged"
     doc = Document(
         id=mr.web_url,
         sections=[TextSection(link=mr.web_url, text=mr.description or "")],
         source=DocumentSource.GITLAB,
         semantic_identifier=mr.title,
         doc_updated_at=_gitlab_datetime_to_utc(mr.updated_at),
-        # NOTE: doc_created_at population not yet verified against live data
         doc_created_at=_gitlab_datetime_to_utc(mr.created_at),
-        primary_owners=[get_author(mr.author)],
-        metadata={
-            "state": mr.state,
-            "type": "MergeRequest",
-            "object_type": "MergeRequest",
-        },
+        primary_owners=owners,
+        metadata=_gitlab_catalog_tags(
+            state=mr.state,
+            object_type="MergeRequest",
+            stored_type="MergeRequest",
+            project_path=project_path,
+            iid=getattr(mr, "iid", None),
+            author=getattr(mr, "author", None),
+            assignees=getattr(mr, "assignees", None),
+            labels=getattr(mr, "labels", None),
+            created_at=mr.created_at,
+            updated_at=mr.updated_at,
+            merged=str(merged).lower() if merged else None,
+        ),
     )
     return doc
 
@@ -117,24 +235,31 @@ def _gitlab_issue_object_type(issue: Any) -> str:
     return raw
 
 
-def _convert_issue_to_document(issue: Any) -> Document:
+def _convert_issue_to_document(issue: Any, project_path: str) -> Document:
+    """Index one GitLab issue. Omits assignee/due/priority when GitLab has none."""
     stored_type = issue.type if getattr(issue, "type", None) else "Issue"
-    iid = getattr(issue, "iid", None)
+    owners = [get_author(issue.author)] if getattr(issue, "author", None) else []
     doc = Document(
         id=issue.web_url,
         sections=[TextSection(link=issue.web_url, text=issue.description or "")],
         source=DocumentSource.GITLAB,
         semantic_identifier=issue.title,
         doc_updated_at=_gitlab_datetime_to_utc(issue.updated_at),
-        # NOTE: doc_created_at population not yet verified against live data
         doc_created_at=_gitlab_datetime_to_utc(issue.created_at),
-        primary_owners=[get_author(issue.author)],
-        metadata={
-            "state": issue.state,
-            "type": stored_type,
-            "object_type": _gitlab_issue_object_type(issue),
-            **({"key": f"#{iid}"} if iid is not None else {}),
-        },
+        primary_owners=owners,
+        metadata=_gitlab_catalog_tags(
+            state=issue.state,
+            object_type=_gitlab_issue_object_type(issue),
+            stored_type=stored_type,
+            project_path=project_path,
+            iid=getattr(issue, "iid", None),
+            author=getattr(issue, "author", None),
+            assignees=getattr(issue, "assignees", None),
+            labels=getattr(issue, "labels", None),
+            created_at=issue.created_at,
+            updated_at=issue.updated_at,
+            due_date=getattr(issue, "due_date", None),
+        ),
     )
     return doc
 
@@ -338,7 +463,7 @@ class GitlabConnector(LoadConnector, PollConnector):
                         break
                     if end_utc is not None and updated > end_utc:
                         continue
-                    mr_doc_batch.append(_convert_merge_request_to_document(mr))
+                    mr_doc_batch.append(_convert_merge_request_to_document(mr, path))
                 if mr_doc_batch:
                     yield mr_doc_batch
                 if stop_mrs:
@@ -365,7 +490,7 @@ class GitlabConnector(LoadConnector, PollConnector):
                         break
                     if end_utc is not None and updated > end_utc:
                         continue
-                    issue_doc_batch.append(_convert_issue_to_document(issue))
+                    issue_doc_batch.append(_convert_issue_to_document(issue, path))
                 if issue_doc_batch:
                     yield issue_doc_batch
                 if stop_issues:

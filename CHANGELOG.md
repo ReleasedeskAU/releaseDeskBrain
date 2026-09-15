@@ -4,6 +4,13 @@
 
 ### Added
 
+- GitLab issues and merge requests now tag Ask list fields from GitLab REST
+  data: ``status``/``state`` (opened/closed/merged), ``created``, ``updated``,
+  ``assignee`` when assigned, ``duedate`` when set, ``labels``, ``project``,
+  ``reporter``. GitLab has no native priority — that tag is omitted, not
+  invented. Empty assignee/due stay untagged. Re-index from beginning after
+  deploying the engine.
+
 - Jira connector indexes populated custom fields (site field name + value)
   into ticket text and ``custom_fields`` metadata. Rank / lexorank is skipped.
   Field names come from the Jira field catalog — not a hardcoded tenant list.
