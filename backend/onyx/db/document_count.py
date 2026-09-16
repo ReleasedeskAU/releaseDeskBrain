@@ -53,9 +53,13 @@ ALLOWED_TAG_KEYS = frozenset(
         "num_commits",
         "state",
         "merged",
+        "channel",
+        "author",
     }
 )
-CONTAINS_TAG_KEYS = frozenset({"assignee", "reporter", "labels", "last_updater"})
+CONTAINS_TAG_KEYS = frozenset(
+    {"assignee", "reporter", "labels", "last_updater", "author"}
+)
 MAX_FILTER_VALUE_CHARS = 80
 MAX_MATCHED_VALUES = 20
 MAX_DOCUMENT_KEY_CHARS = 40
@@ -73,6 +77,11 @@ if not DISPLAY_TAG_KEYS.isdisjoint(PII_TAG_KEYS):
     raise RuntimeError("PII tag keys must not be returned")
 if not DISPLAY_TAG_KEYS.isdisjoint(ALLOWED_TAG_KEYS):
     raise RuntimeError("Display-only tags must not be count/filter fields")
+
+
+def tag_key_is(filter_field: str):
+    """Allow-list keys are lowercase. Slack stored Channel with a capital C."""
+    return func.lower(Tag.tag_key) == filter_field
 
 
 class DocumentCountError(ValueError):
@@ -149,12 +158,14 @@ def queryable_fields() -> dict[str, object]:
             "title",
             "link",
             "assignee",
+            "author",
             "status",
             "created",
             "updated",
             "duedate",
             "priority",
             "status_category",
+            "source",
         ],
         "cap": MAX_CATALOG_ROWS,
         "note": (
@@ -387,7 +398,7 @@ def _matching_tag_values(
 ) -> list[str]:
     stmt = (
         select(Tag.tag_value)
-        .where(Tag.tag_key == filter_field)
+        .where(tag_key_is(filter_field))
         .where(_tag_value_clause(filter_field, filter_value))
         .distinct()
         .limit(MAX_MATCHED_VALUES + 1)
@@ -412,7 +423,7 @@ def _indexed_doc_ids_for_values(
             DocumentByConnectorCredentialPair.id == Document__Tag.document_id,
         )
         .where(DocumentByConnectorCredentialPair.has_been_indexed.is_(True))
-        .where(Tag.tag_key == filter_field)
+        .where(tag_key_is(filter_field))
         .where(Tag.tag_value.in_(tag_values))
         .distinct()
     )

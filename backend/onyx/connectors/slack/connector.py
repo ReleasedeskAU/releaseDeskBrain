@@ -58,6 +58,7 @@ from onyx.connectors.slack.source_operations import (
 from onyx.connectors.slack.utils import (
     SlackTextCleaner,
     expert_info_from_slack_id,
+    slack_document_metadata,
     fetch_team_user_emails,
     get_message_link,
 )
@@ -335,6 +336,85 @@ def get_thread(
     return threads
 
 
+def _message_thread_ts(message: MessageType) -> str | None:
+    """Top-level thread_ts on a history row. Empty string is missing."""
+    raw = message.get("thread_ts")
+    if isinstance(raw, str) and raw:
+        return raw
+    return None
+
+
+def _thread_root_ts(thread: ThreadType, fallback: str) -> str:
+    """Parent ts: nested thread_ts if Slack set one, else the first message ts."""
+    if not thread:
+        return fallback
+    nested = _message_thread_ts(thread[0])
+    if nested:
+        return nested
+    ts = thread[0].get("ts")
+    return ts if isinstance(ts, str) and ts else fallback
+
+
+def _fetch_thread_or_row(
+    message: MessageType,
+    slack_client: SlackSourceOperations,
+    channel: ChannelType,
+    lookup_ts: str,
+) -> ThreadType:
+    """conversations.replies for lookup_ts, or the history row when Slack errors."""
+    try:
+        thread = get_thread(
+            slack_client=slack_client, channel=channel, thread_id=lookup_ts
+        )
+    except SlackApiError as e:
+        slug = _slack_error_code(e)
+        if slug in _JOIN_CREDENTIAL_ERRORS or slug == "missing_scope":
+            raise
+        logger.warning(
+            "Thread lookup for %s failed (%s); indexing the history row alone.",
+            lookup_ts,
+            slug or "unknown",
+        )
+        return [message]
+    return thread or [message]
+
+
+def _history_thread(
+    message: MessageType,
+    slack_client: SlackSourceOperations,
+    channel: ChannelType,
+) -> ThreadType:
+    """Full thread for a conversations.history row.
+
+    History can include a channel-visible reply without top-level thread_ts
+    (those rows index as channel__reply_ts and their permalinks omit
+    ?thread_ts=). conversations.replies accepts a reply ts and returns the
+    parent first. If it returns only the reply but sets thread_ts, fetch the
+    parent so the document is not reply-only under the parent id.
+    """
+    lookup_ts = _message_thread_ts(message) or message["ts"]
+    thread = _fetch_thread_or_row(message, slack_client, channel, lookup_ts)
+    root_ts = _thread_root_ts(thread, message["ts"])
+    first_ts = thread[0].get("ts") if thread else None
+    if root_ts != first_ts:
+        thread = _fetch_thread_or_row(message, slack_client, channel, root_ts)
+    return thread
+
+
+def _doc_id_ts_for_history_message(
+    message: MessageType,
+    slack_client: SlackSourceOperations,
+    channel: ChannelType,
+) -> str:
+    """Document id ts: parent thread_ts when Slack set one, else replies root."""
+    hinted = _message_thread_ts(message)
+    if hinted:
+        return hinted
+    return _thread_root_ts(
+        _history_thread(message, slack_client, channel), message["ts"]
+    )
+
+
 def get_latest_message_time(thread: ThreadType) -> datetime:
     max_ts = max([float(msg.get("ts", 0)) for msg in thread])
     return datetime.fromtimestamp(max_ts, tz=timezone.utc)
@@ -437,7 +517,7 @@ def thread_to_doc(
                 "channel_id": channel_id,
             }
         },
-        metadata={"Channel": channel_name},
+        metadata=slack_document_metadata(channel_name, initial_sender_expert_info),
         external_access=channel_access,
         parent_hierarchy_raw_node_id=channel_id,
     )
@@ -665,45 +745,43 @@ def _message_to_doc(
         [MessageType], SlackMessageFilterReason | None
     ] = default_msg_filter,
     team_id_to_url: dict[str, str] | None = None,
-) -> tuple[Document | None, SlackMessageFilterReason | None]:
-    """Returns a doc or None.
-    If None is returned, the second element of the tuple may be a filter reason
+) -> tuple[Document | None, SlackMessageFilterReason | None, str]:
+    """Turn one history row into a thread document.
+
+    Returns (doc, filter_reason, root_ts). root_ts is the document id suffix
+    even when doc is None (already seen or filtered). History replies without
+    top-level thread_ts still resolve to the parent via conversations.replies.
     """
-    filtered_thread: ThreadType | None = None
-    filter_reason: SlackMessageFilterReason | None = None
-    thread_ts = message.get("thread_ts")
-    if thread_ts:
-        # NOTE: if thread_ts is present, there's a thread we need to process
-        # ... otherwise, we can skip it
+    hinted_ts = _message_thread_ts(message)
+    root_ts = hinted_ts or message["ts"]
+    if hinted_ts and hinted_ts in seen_thread_ts:
+        return None, None, hinted_ts
 
-        # skip threads we've already seen, since we've already processed all
-        # messages in that thread
-        if thread_ts in seen_thread_ts:
-            return None, None
-
-        thread = get_thread(
-            slack_client=slack_client, channel=channel, thread_id=thread_ts
-        )
-
-        # we'll just set and use the last filter reason if
-        # we bomb out later
-        filtered_thread = []
-        for message in thread:
-            filter_reason = msg_filter_func(message)
-            if filter_reason:
-                continue
-
-            filtered_thread.append(message)
-    else:
+    if not hinted_ts:
         filter_reason = msg_filter_func(message)
         if filter_reason:
-            return None, filter_reason
+            return None, filter_reason, root_ts
 
-        filtered_thread = [message]
+    thread = _history_thread(message, slack_client, channel)
+    root_ts = _thread_root_ts(thread, message["ts"])
+    if root_ts in seen_thread_ts:
+        return None, None, root_ts
+    first_ts = thread[0].get("ts") if thread else None
+    # Non-root history row whose parent thread could not be loaded. Skip so we
+    # do not mint channel__reply_ts; the parent history row indexes the thread.
+    if first_ts != root_ts:
+        return None, None, root_ts
 
-    # we'll just set and use the last filter reason if we get an empty list
+    filtered_thread: ThreadType = []
+    filter_reason = None
+    for thread_message in thread:
+        filter_reason = msg_filter_func(thread_message)
+        if filter_reason:
+            continue
+        filtered_thread.append(thread_message)
+
     if not filtered_thread:
-        return None, filter_reason
+        return None, filter_reason, root_ts
 
     doc = thread_to_doc(
         channel=channel,
@@ -714,7 +792,7 @@ def _message_to_doc(
         channel_access=channel_access,
         team_id_to_url=team_id_to_url,
     )
-    return doc, None
+    return doc, None, root_ts
 
 
 def _get_all_doc_ids(
@@ -791,20 +869,21 @@ def _get_all_doc_ids(
                 if filter_reason:
                     continue
 
-                # The document id is the channel id and the ts of the first message in the thread
-                # Since we already have the first message of the thread, we dont have to
-                # fetch the thread for id retrieval, saving time and API calls
-
+                # Parent ts when Slack set thread_ts; otherwise conversations.replies
+                # so channel-visible replies are not listed as their own ids.
+                doc_ts = _doc_id_ts_for_history_message(
+                    message, slack_client, channel
+                )
                 slim_doc_batch.append(
                     SlimDocument(
                         id=_build_doc_id(
-                            channel_id=channel_id, thread_ts=message["ts"]
+                            channel_id=channel_id, thread_ts=doc_ts
                         ),
                         external_access=external_access,
                         parent_hierarchy_raw_node_id=channel_id,
                         # Slack ts is the thread root's creation time (epoch seconds)
                         doc_created_at=datetime.fromtimestamp(
-                            float(message["ts"]), tz=timezone.utc
+                            float(doc_ts), tz=timezone.utc
                         ),
                     )
                 )
@@ -838,15 +917,14 @@ def _process_message(
     ] = default_msg_filter,
     team_id_to_url: dict[str, str] | None = None,
 ) -> ProcessedSlackMessage:
-    thread_ts = message.get("thread_ts")
-    thread_or_message_ts = thread_ts or message["ts"]
+    thread_or_message_ts = _message_thread_ts(message) or message["ts"]
     try:
         # causes random failures for testing checkpointing / continue on failure
         # import random
         # if random.random() > 0.95:
         #     raise RuntimeError("Random failure :P")
 
-        doc, filter_reason = _message_to_doc(
+        doc, filter_reason, thread_or_message_ts = _message_to_doc(
             message=message,
             slack_client=slack_client,
             channel=channel,

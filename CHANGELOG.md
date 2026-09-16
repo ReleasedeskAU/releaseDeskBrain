@@ -42,6 +42,16 @@
   restricted) skip that channel so indexing can continue on channels the bot
   can already read. Invalid/revoked tokens still fail the run.
 
+- Slack conversations.history rows that are thread replies but omit top-level
+  ``thread_ts`` (permalinks without ``?thread_ts=``) now resolve the parent via
+  ``conversations.replies`` instead of minting a second document keyed by the
+  reply ts. ``thread_broadcast`` is not globally skipped. Rebuild the engine and
+  prune the Slack connector so extra reply-id documents can drop.
+
+- Ask ``list_documents_matching`` rows include the connector ``source`` id so
+  answers can attribute Slack vs Jira (and other sources) instead of blending
+  them. Rebuild the engine for per-row source on ``source=all`` lists.
+
 - Jira assignee/reporter tags now use `displayName` from the issue payload, the
   same as the original connector-engine. Email is an optional extra field read
   only when already present; it is never required to capture the name. Syncs

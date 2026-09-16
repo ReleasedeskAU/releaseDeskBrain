@@ -32,6 +32,17 @@ def test_catalog_document_row_keeps_unassigned_explicit() -> None:
     assert row["status"] == "To Do"
 
 
+def test_catalog_document_row_includes_connector_source() -> None:
+    row = catalog_document_row(
+        key="C1__1.0",
+        semantic_id="Unknown in #social: hi",
+        link=None,
+        extras={"source": "slack", "author": None},
+    )
+    assert row["source"] == "slack"
+    assert row["author"] is None
+
+
 def test_catalog_document_row_falls_back_to_semantic_prefix() -> None:
     row = catalog_document_row(
         key=None,

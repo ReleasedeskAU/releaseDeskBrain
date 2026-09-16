@@ -93,6 +93,58 @@ def get_message_link(
     return link
 
 
+_SLACK_ERROR_SLUG_RE = re.compile(r"^[a-z0-9_]+$")
+_AUTHOR_TAG_MAX_CHARS = 80
+
+
+def _safe_slack_error_slug(raw: object) -> str:
+    """Allow-listed Slack error token only — never a response body or email."""
+    if not isinstance(raw, str):
+        return "unknown"
+    slug = raw.strip()
+    if not slug or len(slug) > 64 or not _SLACK_ERROR_SLUG_RE.fullmatch(slug):
+        return "unknown"
+    return slug
+
+
+def _slack_api_error_slug(err: SlackApiError) -> str:
+    response = err.response
+    if isinstance(response, dict):
+        return _safe_slack_error_slug(response.get("error"))
+    getter = getattr(response, "get", None)
+    if callable(getter):
+        return _safe_slack_error_slug(getter("error"))
+    return "unknown"
+
+
+def slack_author_display_name(info: BasicExpertInfo | None) -> str | None:
+    """Display name for the Slack author tag. Never email — that is PII."""
+    if info is None:
+        return None
+    name = (info.display_name or "").strip()
+    if not name:
+        first = (info.first_name or "").strip()
+        last = (info.last_name or "").strip()
+        name = f"{first} {last}".strip() if last else first
+    if not name or name.casefold() == "unknown":
+        return None
+    return name[:_AUTHOR_TAG_MAX_CHARS]
+
+
+def slack_document_metadata(
+    channel_name: str, author_info: BasicExpertInfo | None
+) -> dict[str, str]:
+    """Indexed Slack tags: channel always; author only when users.info resolved a name.
+
+    Does not write Jira assignee. Email is never stored.
+    """
+    metadata = {"channel": channel_name}
+    author = slack_author_display_name(author_info)
+    if author:
+        metadata["author"] = author
+    return metadata
+
+
 def expert_info_from_slack_id(
     user_id: str | None,
     fetch_user_info: FetchUserInfo,
@@ -106,13 +158,26 @@ def expert_info_from_slack_id(
 
     try:
         response = fetch_user_info(user_id)
+    except SlackApiError as e:
+        # Author lookup is optional. Missing users:read must not fail the thread.
+        logger.warning(
+            "Slack author lookup failed for user %s: %s",
+            user_id,
+            _slack_api_error_slug(e),
+        )
+        user_cache[user_id] = None
+        return None
     except Exception:
-        # Author lookup is optional. Missing users:read, a wrapped SDK error,
-        # or a deleted user must not fail the thread — Ask still indexes the text.
+        logger.warning("Slack author lookup failed for user %s: unknown", user_id)
         user_cache[user_id] = None
         return None
 
     if not response.ok:
+        logger.warning(
+            "Slack author lookup failed for user %s: %s",
+            user_id,
+            _safe_slack_error_slug(getattr(response, "error", None)),
+        )
         user_cache[user_id] = None
         return None
 

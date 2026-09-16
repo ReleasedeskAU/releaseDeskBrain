@@ -458,6 +458,7 @@ class SlackChannelInfoResponse(SlackResponseModel):
 
 class SlackUserInfoResponse(SlackResponseModel):
     ok: bool = False
+    error: str | None = None
     user: dict[str, Any] = {}
 
 

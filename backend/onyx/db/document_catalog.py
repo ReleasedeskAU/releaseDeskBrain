@@ -22,6 +22,7 @@ from onyx.db.document_count import (
     escape_ilike_pattern,
     matching_document_ids,
     queryable_fields,
+    tag_key_is,
 )
 from onyx.db.document_date_filter import (
     DATE_TAG_KEYS,
@@ -35,6 +36,7 @@ from onyx.db.models import Connector, Document, DocumentByConnectorCredentialPai
 KEY_TAG = "key"
 LIST_PROJECTION_KEYS = (
     "assignee",
+    "author",
     "status",
     "status_category",
     "priority",
@@ -318,12 +320,16 @@ def _documents_with_keys(
         for row in db_session.execute(select(Document).where(Document.id.in_(doc_ids))).scalars()
     }
     projection = _list_projection(db_session, doc_ids)
+    sources = _document_sources(db_session, doc_ids)
     return [
         catalog_document_row(
             key=projection.get(doc_id, {}).get("key"),
             semantic_id=docs[doc_id].semantic_id,
             link=docs[doc_id].link,
-            extras=_projection_extras(projection.get(doc_id, {})),
+            extras={
+                **_projection_extras(projection.get(doc_id, {})),
+                "source": sources.get(doc_id),
+            },
         )
         for doc_id in doc_ids
         if doc_id in docs
@@ -351,6 +357,35 @@ def _projection_extras(fields: dict[str, str]) -> dict[str, str | None]:
     return {key: fields.get(key) for key in LIST_PROJECTION_KEYS}
 
 
+def _document_sources(db_session: Session, doc_ids: list[str]) -> dict[str, str]:
+    """Connector source id per document. Omits a doc when paired sources disagree."""
+    if not doc_ids:
+        return {}
+    rows = db_session.execute(
+        select(DocumentByConnectorCredentialPair.id, Connector.source)
+        .join(Connector, Connector.id == DocumentByConnectorCredentialPair.connector_id)
+        .where(DocumentByConnectorCredentialPair.id.in_(doc_ids))
+        .where(DocumentByConnectorCredentialPair.has_been_indexed.is_(True))
+    ).all()
+    out: dict[str, str] = {}
+    conflicted: set[str] = set()
+    for doc_id, source in rows:
+        key = str(doc_id)
+        if source is None:
+            continue
+        value = source.value if isinstance(source, DocumentSource) else str(source).strip().lower()
+        if not value:
+            continue
+        prior = out.get(key)
+        if prior is None:
+            out[key] = value
+        elif prior != value:
+            conflicted.add(key)
+    for key in conflicted:
+        out.pop(key, None)
+    return out
+
+
 def _group_counts(
     db_session: Session,
     source: DocumentSource | None,
@@ -369,7 +404,7 @@ def _group_counts(
             DocumentByConnectorCredentialPair.id == Document__Tag.document_id,
         )
         .where(DocumentByConnectorCredentialPair.has_been_indexed.is_(True))
-        .where(Tag.tag_key == filter_field)
+        .where(tag_key_is(filter_field))
         .group_by(value_expr)
         .order_by(func.count(distinct(Document__Tag.document_id)).desc(), value_expr)
         .limit(MAX_CATALOG_ROWS + 1)
@@ -395,7 +430,7 @@ def _count_docs_with_tag_key(
             DocumentByConnectorCredentialPair.id == Document__Tag.document_id,
         )
         .where(DocumentByConnectorCredentialPair.has_been_indexed.is_(True))
-        .where(Tag.tag_key == filter_field)
+        .where(tag_key_is(filter_field))
     )
     if source is not None:
         stmt = stmt.where(Tag.source == source)

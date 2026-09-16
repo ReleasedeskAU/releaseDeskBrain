@@ -39,6 +39,8 @@ def test_parse_count_source() -> None:
 def test_parse_filter_field_allowlist() -> None:
     assert parse_filter_field(None) is None
     assert parse_filter_field("Assignee") == "assignee"
+    assert parse_filter_field("Channel") == "channel"
+    assert parse_filter_field("Author") == "author"
     with pytest.raises(DocumentCountError):
         parse_filter_field("sql_injection")
 
@@ -93,6 +95,8 @@ def test_pii_fields_are_never_queryable() -> None:
     assert "num_commits" in fields
     assert "state" in fields
     assert "merged" in fields
+    assert "channel" in fields
+    assert "author" in fields
     assert "custom_fields" not in fields
     with pytest.raises(DocumentCountError):
         parse_filter_field("custom_fields")
@@ -103,11 +107,14 @@ def test_pii_fields_are_never_queryable() -> None:
     assert field_uses_contains_match("merged") is False
     assert field_uses_contains_match("repo") is False
     assert field_uses_contains_match("object_type") is False
+    assert field_uses_contains_match("author") is True
     assert schema["resolved_status_category"] == "done"
     assert schema["status_category_values"] == ["new", "indeterminate", "done"]
     assert "resolved_statuses" not in schema
     assert "due_before" in schema["date_range_params"]
     assert "created_asc" in schema["sort_by"]
+    assert "author" in schema["list_projection"]
+    assert "source" in schema["list_projection"]
 
 
 def test_key_and_parent_are_exact_not_contains() -> None:
