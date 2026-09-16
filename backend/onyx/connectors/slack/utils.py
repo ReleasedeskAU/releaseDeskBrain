@@ -104,7 +104,13 @@ def expert_info_from_slack_id(
     if user_id in user_cache:
         return user_cache[user_id]
 
-    response = fetch_user_info(user_id)
+    try:
+        response = fetch_user_info(user_id)
+    except Exception:
+        # Author lookup is optional. Missing users:read, a wrapped SDK error,
+        # or a deleted user must not fail the thread — Ask still indexes the text.
+        user_cache[user_id] = None
+        return None
 
     if not response.ok:
         user_cache[user_id] = None

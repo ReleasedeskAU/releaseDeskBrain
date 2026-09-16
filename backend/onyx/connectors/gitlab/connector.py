@@ -187,6 +187,7 @@ def _gitlab_catalog_tags(
             "object_type": object_type,
             "key": iid_text,
             "project": project_path,
+            "repo": project_path,
             "reporter": _person_display_name(author),
             "assignee": _people_names(assignees),
             "labels": _label_names(labels),

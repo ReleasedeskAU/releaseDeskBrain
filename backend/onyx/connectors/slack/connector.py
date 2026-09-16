@@ -214,6 +214,76 @@ def _channel_history_variant(channel: ChannelType) -> SlackChannelVariant:
     )
 
 
+# Join cannot succeed for these: skip the channel instead of failing the connector.
+_JOIN_CREDENTIAL_ERRORS = frozenset(
+    {
+        "invalid_auth",
+        "not_authed",
+        "token_revoked",
+        "account_inactive",
+        "token_expired",
+    }
+)
+
+# Channel-local history failures: skip this channel, do not abort the run.
+_HISTORY_SKIP_ERRORS = frozenset(
+    {
+        "not_in_channel",
+        "channel_not_found",
+        "is_archived",
+    }
+)
+
+
+def _slack_error_code(err: SlackApiError) -> str:
+    """Slack error slug from a SlackApiError response. Empty when Slack omitted it."""
+    response = err.response
+    if isinstance(response, dict):
+        return str(response.get("error") or "")
+    getter = getattr(response, "get", None)
+    if callable(getter):
+        return str(getter("error") or "")
+    return ""
+
+
+def _ensure_bot_can_read_channel(
+    slack_client: SlackSourceOperations, channel: ChannelType
+) -> bool:
+    """True when the bot can read this channel. False = skip it, do not abort the run.
+
+    Private channels cannot be joined (invite only). Public join failures that are
+    not a dead token (missing ``channels:join``, archived, restricted) are skipped
+    so one unjoinable channel cannot stall indexing with 0 documents.
+    """
+    if channel.get("is_member"):
+        return True
+    channel_id = channel.get("id")
+    label = channel.get("name") or channel_id or "unknown"
+    if not channel_id:
+        logger.warning("Skipping Slack channel with no id")
+        return False
+    if channel.get("is_private"):
+        logger.warning(
+            "Skipping private channel %s — the bot is not a member and cannot join.",
+            label,
+        )
+        return False
+    try:
+        slack_client.join_channel(channel_id=channel_id)
+        logger.info("Successfully joined '%s'", label)
+        return True
+    except SlackApiError as e:
+        slug = _slack_error_code(e)
+        if slug in _JOIN_CREDENTIAL_ERRORS:
+            raise
+        logger.warning(
+            "Skipping channel %s — conversations.join failed (%s).",
+            label,
+            slug or "unknown",
+        )
+        return False
+
+
 def get_channel_messages(
     slack_client: SlackSourceOperations,
     channel: ChannelType,
@@ -222,23 +292,33 @@ def get_channel_messages(
     callback: IndexingHeartbeatInterface | None = None,
 ) -> Generator[list[MessageType], None, None]:
     """Get all messages in a channel"""
-    # join so that the bot can access messages
-    if not channel["is_member"]:
-        slack_client.join_channel(channel_id=channel["id"])
-        logger.info("Successfully joined '%s'", channel["name"])
+    if not _ensure_bot_can_read_channel(slack_client, channel):
+        return
 
-    for result in slack_client.fetch_channel_history(
-        variant=_channel_history_variant(channel),
-        channel_id=channel["id"],
-        oldest=oldest,
-        latest=latest,
-    ):
-        if callback:
-            if callback.should_stop():
-                raise RuntimeError("get_channel_messages: Stop signal detected")
+    try:
+        history = slack_client.fetch_channel_history(
+            variant=_channel_history_variant(channel),
+            channel_id=channel["id"],
+            oldest=oldest,
+            latest=latest,
+        )
+        for result in history:
+            if callback:
+                if callback.should_stop():
+                    raise RuntimeError("get_channel_messages: Stop signal detected")
 
-            callback.progress("get_channel_messages", 0)
-        yield cast(list[MessageType], result.messages)
+                callback.progress("get_channel_messages", 0)
+            yield cast(list[MessageType], result.messages)
+    except SlackApiError as e:
+        slug = _slack_error_code(e)
+        if slug in _JOIN_CREDENTIAL_ERRORS or slug == "missing_scope":
+            raise
+        logger.warning(
+            "Skipping channel %s — conversations.history failed (%s).",
+            channel.get("name") or channel.get("id") or "unknown",
+            slug or "unknown",
+        )
+        return
 
 
 def get_thread(
@@ -540,30 +620,31 @@ def _get_messages(
 ) -> tuple[list[MessageType], bool]:
     """Slack goes from newest to oldest."""
 
-    # have to be in the channel in order to read messages
-    if not channel["is_member"]:
-        try:
-            slack_client.join_channel(channel_id=channel["id"])
-        except SlackApiError as e:
-            if e.response["error"] == "is_archived":
-                logger.warning("Channel %s is archived. Skipping.", channel["name"])
-                return [], False
+    if not _ensure_bot_can_read_channel(slack_client, channel):
+        return [], False
 
-            logger.exception("Error joining channel %s", channel["name"])
-            raise
-        logger.info("Successfully joined '%s'", channel["name"])
-
-    # Single page: the gateway paginator is lazy, so taking one yield makes
-    # exactly one request, and the page still carries the cursor metadata.
-    response = next(
-        slack_client.fetch_channel_history(
-            variant=_channel_history_variant(channel),
-            channel_id=channel["id"],
-            oldest=oldest,
-            latest=latest,
-            limit=limit,
+    try:
+        # Single page: the gateway paginator is lazy, so taking one yield makes
+        # exactly one request, and the page still carries the cursor metadata.
+        response = next(
+            slack_client.fetch_channel_history(
+                variant=_channel_history_variant(channel),
+                channel_id=channel["id"],
+                oldest=oldest,
+                latest=latest,
+                limit=limit,
+            )
         )
-    )
+    except SlackApiError as e:
+        slug = _slack_error_code(e)
+        if slug in _JOIN_CREDENTIAL_ERRORS or slug == "missing_scope":
+            raise
+        logger.warning(
+            "Skipping channel %s — conversations.history failed (%s).",
+            channel.get("name") or channel.get("id") or "unknown",
+            slug or "unknown",
+        )
+        return [], False
 
     messages = cast(list[MessageType], response.messages)
 

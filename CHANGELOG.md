@@ -7,7 +7,7 @@
 - GitLab issues and merge requests now tag Ask list fields from GitLab REST
   data: ``status``/``state`` (opened/closed/merged), ``created``, ``updated``,
   ``assignee`` when assigned, ``duedate`` when set, ``labels``, ``project``,
-  ``reporter``. GitLab has no native priority — that tag is omitted, not
+  ``repo`` (same tag as GitHub), ``reporter``. GitLab has no native priority — that tag is omitted, not
   invented. Empty assignee/due stay untagged. Re-index from beginning after
   deploying the engine.
 
@@ -35,6 +35,12 @@
   names that missing scope/permission.
 
 ### Fixed
+
+- Slack indexing no longer fails the whole connector on ``conversations.join``.
+  Private channels the bot is not in are skipped (join is invite-only). Public
+  join failures that are not a dead token (missing ``channels:join``, archived,
+  restricted) skip that channel so indexing can continue on channels the bot
+  can already read. Invalid/revoked tokens still fail the run.
 
 - Jira assignee/reporter tags now use `displayName` from the issue payload, the
   same as the original connector-engine. Email is an optional extra field read
