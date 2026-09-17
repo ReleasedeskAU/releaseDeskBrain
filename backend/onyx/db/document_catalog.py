@@ -21,7 +21,6 @@ from onyx.db.document_count import (
     _resolve_filters,
     escape_ilike_pattern,
     matching_document_ids,
-    queryable_fields,
     tag_key_is,
 )
 from onyx.db.document_date_filter import (
@@ -229,9 +228,14 @@ def lookup_document_by_key(
     }
 
 
-def list_queryable_fields() -> dict[str, object]:
-    """Published allow-list for Ask. Does not scan stored tag keys."""
-    return queryable_fields()
+def list_queryable_fields(
+    source: DocumentSource | None = None,
+    db_session: Session | None = None,
+) -> dict[str, object]:
+    """Published allow-list for Ask. Slack uses declared schema + selection."""
+    from onyx.db.document_count import queryable_fields_for_source
+
+    return queryable_fields_for_source(source, db_session)
 
 
 def catalog_document_row(

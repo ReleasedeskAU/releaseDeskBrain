@@ -2,6 +2,11 @@ import re
 from collections.abc import Callable
 from functools import lru_cache
 
+from onyx.connectors.field_schema import (
+    FieldCategory,
+    FieldDecl,
+    validate_field_schema,
+)
 from onyx.connectors.models import BasicExpertInfo
 from onyx.connectors.slack.models import MessageType
 from onyx.connectors.slack.source_operations import (
@@ -131,12 +136,34 @@ def slack_author_display_name(info: BasicExpertInfo | None) -> str | None:
     return name[:_AUTHOR_TAG_MAX_CHARS]
 
 
+# Optional Slack tags only. Identity (id/title/link) and message text are
+# always-on Document fields, not this list. Import fails if a PII key is added.
+FIELD_SCHEMA = validate_field_schema(
+    (
+        FieldDecl(
+            "channel",
+            FieldCategory.RELATIONSHIPS,
+            "Channel",
+            match="exact",
+        ),
+        FieldDecl(
+            "author",
+            FieldCategory.OWNERSHIP,
+            "Author",
+            match="contains",
+        ),
+    )
+)
+
+
 def slack_document_metadata(
     channel_name: str, author_info: BasicExpertInfo | None
 ) -> dict[str, str]:
     """Indexed Slack tags: channel always; author only when users.info resolved a name.
 
-    Does not write Jira assignee. Email is never stored.
+    Does not write Jira assignee. Email is never stored. Ask queryability of
+    these tags follows the connector instance selection (unset = both keys).
+    Unchecking a key does not purge already-stored tags.
     """
     metadata = {"channel": channel_name}
     author = slack_author_display_name(author_info)

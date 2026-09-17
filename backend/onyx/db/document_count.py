@@ -12,6 +12,8 @@ from sqlalchemy import distinct, func, select
 from sqlalchemy.orm import Session
 
 from onyx.configs.constants import DocumentSource
+from onyx.connectors.field_schema import PII_TAG_KEYS, effective_selection
+from onyx.connectors.slack.utils import FIELD_SCHEMA as SLACK_FIELD_SCHEMA
 from onyx.db.document_date_filter import (
     DATE_TAG_KEYS,
     RESOLVED_STATUS_CATEGORY,
@@ -23,7 +25,7 @@ from onyx.db.document_date_filter import (
 from onyx.db.models import Connector, DocumentByConnectorCredentialPair, Document__Tag, Tag
 
 # Never queryable or returned. Enforced at parse and at field projection.
-PII_TAG_KEYS = frozenset({"assignee_email", "reporter_email"})
+# PII_TAG_KEYS is the platform blocklist (onyx.connectors.field_schema).
 
 ALLOWED_TAG_KEYS = frozenset(
     {
@@ -131,16 +133,79 @@ def queryable_fields() -> dict[str, object]:
     Returns:
         Sorted field names plus which keys use contains vs exact match.
     """
-    fields = sorted(ALLOWED_TAG_KEYS)
-    contains = sorted(CONTAINS_TAG_KEYS)
-    exact = sorted(ALLOWED_TAG_KEYS - CONTAINS_TAG_KEYS)
+    return _queryable_payload(ALLOWED_TAG_KEYS)
+
+
+def queryable_fields_for_source(
+    source: DocumentSource | None,
+    db_session: Session | None = None,
+) -> dict[str, object]:
+    """Per-source published fields. Slack uses declared schema + instance selection.
+
+    Other sources still use ALLOWED_TAG_KEYS. Slack unset selection is channel
+    and author (today's tags). Empty selection is no optional tags.
+    """
+    if source != DocumentSource.SLACK:
+        return queryable_fields()
+    keys = slack_queryable_keys(db_session)
+    payload = _queryable_payload(keys)
+    payload["note"] = (
+        "Slack optional tags from this tenant's field selection. "
+        "Unset inherits channel and author. Empty list is none. "
+        "Unchecking does not purge stored tags or force a re-index."
+    )
+    return payload
+
+
+def slack_queryable_keys(db_session: Session | None) -> frozenset[str]:
+    """Union of effective Slack selections. No rows / unset → schema defaults."""
+    if db_session is None:
+        return effective_selection(None, SLACK_FIELD_SCHEMA)
+    stmt = select(Connector.indexed_field_selection).where(
+        Connector.source == DocumentSource.SLACK
+    )
+    rows = list(db_session.execute(stmt).scalars().all())
+    if not rows:
+        return effective_selection(None, SLACK_FIELD_SCHEMA)
+    selected: set[str] = set()
+    for stored in rows:
+        selected |= set(effective_selection(stored, SLACK_FIELD_SCHEMA))
+    return frozenset(selected)
+
+
+def require_source_filter_field(
+    filter_field: str | None,
+    source: DocumentSource | None,
+    db_session: Session | None,
+) -> str:
+    """Allow-listed tag that is also selected on this source when it has a schema."""
+    key = require_filter_field(filter_field)
+    _assert_field_allowed_on_source(key, source, db_session)
+    return key
+
+
+def _assert_field_allowed_on_source(
+    key: str,
+    source: DocumentSource | None,
+    db_session: Session | None,
+) -> None:
+    if source != DocumentSource.SLACK:
+        return
+    if key not in slack_queryable_keys(db_session):
+        raise DocumentCountError("Unknown filter field")
+
+
+def _queryable_payload(keys: frozenset[str]) -> dict[str, object]:
+    fields = sorted(keys)
+    contains = sorted(keys & CONTAINS_TAG_KEYS)
+    exact = sorted(keys - CONTAINS_TAG_KEYS)
     return {
         "fields": fields,
         "contains_match": contains,
         "exact_match": exact,
         "resolved_status_category": RESOLVED_STATUS_CATEGORY,
         "status_category_values": list(STATUS_CATEGORY_VALUES),
-        "date_range_fields": sorted(DATE_TAG_KEYS),
+        "date_range_fields": sorted(keys & DATE_TAG_KEYS),
         "date_range_params": [
             "created_from",
             "created_to",
@@ -360,6 +425,7 @@ def _resolve_filters(
 ) -> list[dict[str, object]]:
     resolved: list[dict[str, object]] = []
     for field, value in filters:
+        _assert_field_allowed_on_source(field, source, db_session)
         matched = _matching_tag_values(db_session, source, field, value)
         resolved.append(
             {

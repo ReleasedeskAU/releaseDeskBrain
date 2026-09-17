@@ -2003,6 +2003,13 @@ class Connector(Base):
     connector_specific_config: Mapped[dict[str, Any]] = mapped_column(
         postgresql.JSONB()
     )
+    # NULL = unset (inherit schema defaults). [] = no optional tags.
+    # Not part of connector_specific_config — that dict is passed into __init__.
+    indexed_field_selection: Mapped[list[str] | None] = mapped_column(
+        postgresql.JSONB(),
+        nullable=True,
+        default=None,
+    )
     indexing_start: Mapped[datetime.datetime | None] = mapped_column(
         DateTime, nullable=True
     )

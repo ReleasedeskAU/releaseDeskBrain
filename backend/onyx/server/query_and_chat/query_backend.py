@@ -24,7 +24,7 @@ from onyx.db.document_count import (
     parse_catalog_filters,
     parse_count_source,
     parse_document_key,
-    require_filter_field,
+    require_source_filter_field,
 )
 from onyx.db.document_date_filter import parse_date_range_args
 from onyx.db.engine.sql_engine import get_session
@@ -167,9 +167,13 @@ class DocumentFieldsRequest(BaseModel):
 def document_fields(
     body: DocumentFieldsRequest,
     _: User = Depends(require_permission(Permission.FULL_ADMIN_PANEL_ACCESS)),
+    db_session: Session = Depends(get_session),
 ) -> dict[str, object]:
     """Published allow-list of queryable tag fields. Not raw tag discovery."""
-    return list_queryable_fields()
+    try:
+        return list_queryable_fields(parse_count_source(body.source), db_session)
+    except DocumentCountError:
+        raise HTTPException(status_code=400, detail="Invalid catalog request") from None
 
 
 @admin_router.post("/document-distinct")
@@ -183,7 +187,9 @@ def document_distinct(
         return list_distinct_tag_values(
             db_session,
             source=parse_count_source(body.source),
-            filter_field=require_filter_field(body.field),
+            filter_field=require_source_filter_field(
+                body.field, parse_count_source(body.source), db_session
+            ),
         )
     except DocumentCountError:
         raise HTTPException(status_code=400, detail="Invalid catalog request") from None
@@ -200,7 +206,9 @@ def document_breakdown(
         return breakdown_by_tag(
             db_session,
             source=parse_count_source(body.source),
-            filter_field=require_filter_field(body.field),
+            filter_field=require_source_filter_field(
+                body.field, parse_count_source(body.source), db_session
+            ),
             date_bucket=body.date_bucket,
         )
     except DocumentCountError:

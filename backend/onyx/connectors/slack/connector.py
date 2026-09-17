@@ -56,6 +56,7 @@ from onyx.connectors.slack.source_operations import (
     SlackSourceOperations,
 )
 from onyx.connectors.slack.utils import (
+    FIELD_SCHEMA,
     SlackTextCleaner,
     expert_info_from_slack_id,
     slack_document_metadata,
@@ -984,6 +985,7 @@ class SlackConnector(
     CheckpointedConnectorWithPermSync[SlackCheckpoint],
 ):
     MAX_CHANNELS_TO_LOG = 50
+    field_schema = FIELD_SCHEMA
 
     # *** values to use when filtering bot channels ***
 

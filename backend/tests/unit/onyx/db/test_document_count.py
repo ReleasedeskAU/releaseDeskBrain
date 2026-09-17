@@ -149,3 +149,55 @@ def test_and_filters_parse_and_reject_mix() -> None:
     with pytest.raises(DocumentCountError):
         parse_catalog_filters(None, None, [("status", "To Do")] * 6)
 
+
+def test_slack_queryable_fields_unset_match_today_slack_tags() -> None:
+    from onyx.db.document_catalog import list_queryable_fields
+    from onyx.db.document_count import queryable_fields_for_source, require_source_filter_field
+
+    global_fields = queryable_fields()["fields"]
+    assert "channel" in global_fields
+    assert "author" in global_fields
+    assert "assignee" in global_fields
+    slack = queryable_fields_for_source(DocumentSource.SLACK, None)
+    assert slack["fields"] == ["author", "channel"]
+    via_catalog = list_queryable_fields(DocumentSource.SLACK, None)
+    assert via_catalog["fields"] == ["author", "channel"]
+    jira = queryable_fields_for_source(DocumentSource.JIRA, None)
+    assert jira["fields"] == global_fields
+    assert require_source_filter_field("channel", DocumentSource.SLACK, None) == "channel"
+    with pytest.raises(DocumentCountError):
+        require_source_filter_field("assignee", DocumentSource.SLACK, None)
+    assert require_source_filter_field("assignee", DocumentSource.JIRA, None) == "assignee"
+
+
+def test_slack_empty_selection_hides_optional_tags() -> None:
+    from onyx.db.document_count import slack_queryable_keys
+
+    class _FakeSession:
+        def execute(self, _stmt: object) -> "_FakeSession":
+            return self
+
+        def scalars(self) -> "_FakeSession":
+            return self
+
+        def all(self) -> list[list[str]]:
+            return [[]]
+
+    assert slack_queryable_keys(_FakeSession()) == frozenset()
+
+
+def test_slack_unset_row_keeps_channel_and_author() -> None:
+    from onyx.db.document_count import slack_queryable_keys
+
+    class _FakeSession:
+        def execute(self, _stmt: object) -> "_FakeSession":
+            return self
+
+        def scalars(self) -> "_FakeSession":
+            return self
+
+        def all(self) -> list[None]:
+            return [None]
+
+    assert slack_queryable_keys(_FakeSession()) == frozenset({"channel", "author"})
+
