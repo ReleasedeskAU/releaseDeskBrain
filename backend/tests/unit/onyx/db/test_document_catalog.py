@@ -1,6 +1,17 @@
 """Catalog helpers for listing matching documents by tag."""
 
-from onyx.db.document_catalog import catalog_document_row, ticket_key_from_semantic_id
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from onyx.configs.constants import DocumentSource
+from onyx.db.document_catalog import (
+    MAX_CATALOG_ROWS,
+    catalog_document_row,
+    list_documents_matching_filter,
+    ticket_key_from_semantic_id,
+)
+from onyx.db.document_count import DocumentCountError
 
 
 def test_ticket_key_from_semantic_id() -> None:
@@ -51,3 +62,60 @@ def test_catalog_document_row_falls_back_to_semantic_prefix() -> None:
     )
     assert row["key"] == "RD-67"
     assert "Conflicts not visible" in (row["title"] or "")
+
+
+def test_list_matching_rejects_all_sources_with_no_filter() -> None:
+    with pytest.raises(DocumentCountError, match="At least one filter is required"):
+        list_documents_matching_filter(
+            MagicMock(), source=None, filters=[], date_ranges=None
+        )
+
+
+def test_list_matching_named_source_alone_is_capped() -> None:
+    ids = [f"doc-{i}" for i in range(MAX_CATALOG_ROWS + 1)]
+    with patch(
+        "onyx.db.document_catalog._indexed_document_ids_for_source",
+        return_value=set(ids),
+    ), patch(
+        "onyx.db.document_catalog._sort_document_ids", return_value=ids
+    ), patch(
+        "onyx.db.document_catalog._documents_with_keys",
+        side_effect=lambda _db, rows: [{"key": row} for row in rows],
+    ), patch(
+        "onyx.db.document_catalog.intersect_date_range_ids", return_value=None
+    ):
+        result = list_documents_matching_filter(
+            MagicMock(),
+            source=DocumentSource.TEAMS,
+            filters=[],
+            date_ranges=None,
+        )
+    assert result["count"] == MAX_CATALOG_ROWS + 1
+    assert result["truncated"] is True
+    assert result["returned"] == MAX_CATALOG_ROWS
+    assert result["source"] == "teams"
+    assert len(result["documents"]) == MAX_CATALOG_ROWS
+
+
+def test_list_matching_named_source_alone_under_cap_is_not_truncated() -> None:
+    ids = ["doc-a", "doc-b"]
+    with patch(
+        "onyx.db.document_catalog._indexed_document_ids_for_source",
+        return_value=set(ids),
+    ), patch(
+        "onyx.db.document_catalog._sort_document_ids", return_value=ids
+    ), patch(
+        "onyx.db.document_catalog._documents_with_keys",
+        side_effect=lambda _db, rows: [{"key": row} for row in rows],
+    ), patch(
+        "onyx.db.document_catalog.intersect_date_range_ids", return_value=None
+    ):
+        result = list_documents_matching_filter(
+            MagicMock(),
+            source=DocumentSource.TEAMS,
+            filters=[],
+            date_ranges=None,
+        )
+    assert result["count"] == 2
+    assert result["truncated"] is False
+    assert result["returned"] == 2

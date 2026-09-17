@@ -156,23 +156,29 @@ def list_documents_matching_filter(
         count, documents[{key, title, link, …projection}], filters, truncated, cap.
 
     Raises:
-        DocumentCountError: No tag filter and no date range.
+        DocumentCountError: No named source, tag filter, or date range.
     """
     ranges = date_ranges or []
-    if not filters and not ranges:
+    # source=all (None) with no tag/date would dump every connector; a named source is enough.
+    if not filters and not ranges and source is None:
         raise DocumentCountError("At least one filter is required")
     resolved = _resolve_filters(db_session, source, filters) if filters else []
     if filters and any(not item["matched_values"] for item in resolved):
         return _matching_list_payload([], 0, source, resolved, truncated=False)
-    tag_ids = (
-        set(matching_document_ids(
-            db_session,
-            source,
-            [(str(item["filter_field"]), list(item["matched_values"])) for item in resolved],
-        ))
-        if filters
-        else None
-    )
+    if filters:
+        tag_ids = set(
+            matching_document_ids(
+                db_session,
+                source,
+                [(str(item["filter_field"]), list(item["matched_values"])) for item in resolved],
+            )
+        )
+    elif ranges:
+        tag_ids = None
+    else:
+        if source is None:
+            raise DocumentCountError("At least one filter is required")
+        tag_ids = _indexed_document_ids_for_source(db_session, source)
     range_ids = intersect_date_range_ids(db_session, source, ranges)
     doc_ids = _combine_id_sets(tag_ids, range_ids)
     ordered = _sort_document_ids(db_session, list(doc_ids), parse_sort_by(sort_by))
@@ -273,6 +279,20 @@ def _matching_list_payload(
             else "Exact indexed documents matching this filter, not a search sample."
         ),
     }
+
+
+def _indexed_document_ids_for_source(
+    db_session: Session, source: DocumentSource
+) -> set[str]:
+    """Indexed document ids for one connector source (same membership as counts)."""
+    stmt = (
+        select(DocumentByConnectorCredentialPair.id)
+        .select_from(DocumentByConnectorCredentialPair)
+        .join(Connector, Connector.id == DocumentByConnectorCredentialPair.connector_id)
+        .where(DocumentByConnectorCredentialPair.has_been_indexed.is_(True))
+        .where(Connector.source == source)
+    )
+    return {str(doc_id) for doc_id in db_session.execute(stmt).scalars().all()}
 
 
 def _combine_id_sets(

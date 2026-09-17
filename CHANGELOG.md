@@ -41,6 +41,10 @@
 
 ### Fixed
 
+- ``POST /admin/document-list`` accepts a named ``source`` with no tag or date
+  filter and returns that connector's indexed documents, capped at 50.
+  ``source=all`` with no filter is still rejected.
+
 - Teams threads now tag ``channel`` with the Graph display name (same key as
   Slack). Only documents indexed after this engine deploy get the tag. Sync Now
   and a normal index-from-beginning will not backfill the existing corpus:
