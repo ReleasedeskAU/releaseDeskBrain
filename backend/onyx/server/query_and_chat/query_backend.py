@@ -5,10 +5,12 @@ from sqlalchemy.orm import Session
 from onyx.auth.permissions import require_permission
 from onyx.configs.chat_configs import NUM_RETURNED_HITS
 from onyx.configs.constants import DocumentSource
-from onyx.context.search.models import IndexFilters, SearchDoc
+from onyx.context.search.enums import QueryType
+from onyx.context.search.models import IndexFilters, InferenceChunk, SearchDoc
 from onyx.context.search.preprocessing.access_filters import (
     build_access_filters_for_user,
 )
+from onyx.context.search.utils import get_query_embedding
 from onyx.db.document_catalog import (
     breakdown_by_tag,
     list_distinct_tag_values,
@@ -31,6 +33,7 @@ from onyx.db.models import User
 from onyx.db.search_settings import get_current_search_settings
 from onyx.db.tag import find_tags
 from onyx.document_index.factory import get_default_document_index
+from onyx.document_index.interfaces_new import DocumentIndex
 from onyx.server.query_and_chat.models import (
     AdminSearchRequest,
     AdminSearchResponse,
@@ -244,6 +247,41 @@ def document_list(
         raise HTTPException(status_code=400, detail="Invalid catalog request") from None
 
 
+def retrieve_admin_search_chunks(
+    *,
+    query: str,
+    retrieval: str,
+    document_index: DocumentIndex,
+    filters: IndexFilters,
+    db_session: Session,
+) -> list[InferenceChunk]:
+    """Pick random / keyword / hybrid retrieval for admin search.
+
+    Empty query always uses random_retrieval so Connectors' blank list stays
+    unchanged. Hybrid embeds with the current SearchSettings model.
+    """
+    if not query or query.strip() == "":
+        return document_index.random_retrieval(filters=filters)
+    if retrieval == "hybrid":
+        query_embedding = get_query_embedding(query, db_session=db_session)
+        return document_index.hybrid_retrieval(
+            query=query,
+            query_embedding=query_embedding,
+            final_keywords=None,
+            # OpenSearch hybrid ignores query_type; SEMANTIC matches chat default.
+            query_type=QueryType.SEMANTIC,
+            filters=filters,
+            num_to_retrieve=NUM_RETURNED_HITS,
+            include_hidden=True,
+        )
+    return document_index.keyword_retrieval(
+        query=query,
+        filters=filters,
+        num_to_retrieve=NUM_RETURNED_HITS,
+        include_hidden=True,
+    )
+
+
 @admin_router.post("/search", dependencies=[Depends(require_vector_db)])
 def admin_search(
     question: AdminSearchRequest,
@@ -268,18 +306,13 @@ def admin_search(
     search_settings = get_current_search_settings(db_session)
     # This flow is for search so we do not get all indices.
     document_index = get_default_document_index(search_settings, None, db_session)
-
-    if not query or query.strip() == "":
-        matching_chunks = document_index.random_retrieval(filters=final_filters)
-    else:
-        matching_chunks = document_index.keyword_retrieval(
-            query=query,
-            filters=final_filters,
-            num_to_retrieve=NUM_RETURNED_HITS,
-            # Admin search should expose hidden documents so admins can inspect
-            # / unhide them.
-            include_hidden=True,
-        )
+    matching_chunks = retrieve_admin_search_chunks(
+        query=query,
+        retrieval=question.retrieval,
+        document_index=document_index,
+        filters=final_filters,
+        db_session=db_session,
+    )
 
     documents = SearchDoc.from_chunks_or_sections(matching_chunks)
 

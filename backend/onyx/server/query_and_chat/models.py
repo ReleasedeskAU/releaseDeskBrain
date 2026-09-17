@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, model_validator
@@ -290,6 +290,8 @@ class ChatSessionDetailResponse(BaseModel):
 class AdminSearchRequest(BaseModel):
     query: str
     filters: BaseFilters
+    # keyword (default) keeps Connectors work-items unchanged. Ask sends hybrid.
+    retrieval: Literal["keyword", "hybrid"] = "keyword"
 
 
 class AdminSearchResponse(BaseModel):

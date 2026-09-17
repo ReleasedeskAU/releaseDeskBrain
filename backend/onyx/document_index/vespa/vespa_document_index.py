@@ -908,8 +908,11 @@ class VespaDocumentIndex(DocumentIndex):
         query_type: QueryType,
         filters: IndexFilters,
         num_to_retrieve: int,
+        include_hidden: bool = False,
     ) -> list[InferenceChunk]:
-        vespa_where_clauses = build_vespa_filters(filters)
+        vespa_where_clauses = build_vespa_filters(
+            filters, include_hidden=include_hidden
+        )
         # Avoid over-fetching a very large candidate set for global-phase reranking.
         # Keep enough headroom for quality while capping cost on larger indices.
         target_hits = min(max(4 * num_to_retrieve, 100), RERANK_COUNT)
@@ -1320,6 +1323,7 @@ class VespaIndexPair(DocumentIndex):
         query_type: QueryType,
         filters: IndexFilters,
         num_to_retrieve: int,
+        include_hidden: bool = False,
     ) -> list[InferenceChunk]:
         return self._primary.hybrid_retrieval(
             query,
@@ -1328,6 +1332,7 @@ class VespaIndexPair(DocumentIndex):
             query_type,
             filters,
             num_to_retrieve,
+            include_hidden=include_hidden,
         )
 
     def keyword_retrieval(

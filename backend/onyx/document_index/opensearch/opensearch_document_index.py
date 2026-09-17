@@ -798,6 +798,7 @@ class OpenSearchDocumentIndex(DocumentIndex):
         query_type: QueryType,  # noqa: ARG002
         filters: IndexFilters,
         num_to_retrieve: int,
+        include_hidden: bool = False,
     ) -> list[InferenceChunk]:
         # TODO(andrei): There is some duplicated logic in this function with
         # others in this file.
@@ -822,7 +823,7 @@ class OpenSearchDocumentIndex(DocumentIndex):
             # production, so we deliberately conform to the existing logic
             # in order to not unknowningly introduce a possible bug.
             index_filters=filters,
-            include_hidden=False,
+            include_hidden=include_hidden,
         )
         normalization_pipeline_name, _ = get_normalization_pipeline_name_and_config()
         search_hits: list[SearchHit[DocumentChunkWithoutVectors]] = self._client.search(
@@ -1109,6 +1110,7 @@ class OpenSearchIndexPair(DocumentIndex):
         query_type: QueryType,
         filters: IndexFilters,
         num_to_retrieve: int,
+        include_hidden: bool = False,
     ) -> list[InferenceChunk]:
         return self._primary.hybrid_retrieval(
             query,
@@ -1117,6 +1119,7 @@ class OpenSearchIndexPair(DocumentIndex):
             query_type,
             filters,
             num_to_retrieve,
+            include_hidden=include_hidden,
         )
 
     def keyword_retrieval(

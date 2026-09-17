@@ -376,6 +376,7 @@ class HybridCapable(abc.ABC):
         # TODO(andrei): Make this more strict w.r.t. acl, temporary for now.
         filters: IndexFilters,
         num_to_retrieve: int,
+        include_hidden: bool = False,
     ) -> list[InferenceChunk]:
         """Runs hybrid search and returns a list of inference chunks.
 
@@ -391,6 +392,8 @@ class HybridCapable(abc.ABC):
             filters: Filters for things like permissions, source type, time,
                 etc.
             num_to_retrieve: Number of highest matching chunks to return.
+            include_hidden: When True, surface hidden documents. Defaults to
+                False so chat stays unchanged. Admin/Ask hybrid search passes True.
 
         Returns:
             Score-ranked (highest first) list of highest matching chunks.

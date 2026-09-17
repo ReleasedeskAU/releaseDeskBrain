@@ -4,6 +4,11 @@
 
 ### Added
 
+- Admin ``POST /admin/search`` accepts optional ``retrieval=hybrid`` (default
+  ``keyword``). Hybrid embeds the query with current SearchSettings and calls
+  ``hybrid_retrieval(include_hidden=True)``. Empty query still uses random
+  retrieval. Connectors work-items omit the field and stay keyword.
+
 - GitLab issues and merge requests now tag Ask list fields from GitLab REST
   data: ``status``/``state`` (opened/closed/merged), ``created``, ``updated``,
   ``assignee`` when assigned, ``duedate`` when set, ``labels``, ``project``,
