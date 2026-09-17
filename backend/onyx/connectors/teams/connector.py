@@ -427,11 +427,33 @@ def _build_simple_odata_filter(safe_names: list[str]) -> str | None:
     return " or ".join(filter_parts)
 
 
+_AUTHOR_TAG_MAX_CHARS = 80
+
+
 def _channel_display_name(channel: Channel) -> str:
     """Teams channel display name for titles and the ``channel`` tag (same key as Slack)."""
     raw = channel.properties.get("displayName", "Unknown")
     name = raw.strip() if isinstance(raw, str) else ""
     return name or "Unknown"
+
+
+def _teams_author_display_name(top_message: Message) -> str | None:
+    """Graph display name for the author tag. Never email; omit unknown."""
+    if not top_message.from_ or not top_message.from_.user:
+        return None
+    name = (top_message.from_.user.display_name or "").strip()
+    if not name or name.casefold() in {"unknown", "unknown user"}:
+        return None
+    return name[:_AUTHOR_TAG_MAX_CHARS]
+
+
+def _teams_document_metadata(channel: Channel, top_message: Message) -> dict[str, str]:
+    """Indexed Teams tags: channel always; author only when Graph sent a display name."""
+    metadata = {"channel": _channel_display_name(channel)}
+    author = _teams_author_display_name(top_message)
+    if author:
+        metadata["author"] = author
+    return metadata
 
 
 def _construct_semantic_identifier(channel: Channel, top_message: Message) -> str:
@@ -516,9 +538,9 @@ def _convert_thread_to_document(
         doc_created_at=top_message.created_date_time,
         doc_updated_at=most_recent_message_datetime,
         primary_owners=expert_infos,
-        # Same key as Slack: the room display name. Existing docs stay untagged until
-        # a reprocess that bypasses timestamp + content-hash skip (hash ignores metadata).
-        metadata={"channel": _channel_display_name(channel)},
+        # channel + optional author (Graph display name). Existing docs stay untagged
+        # until a reprocess that bypasses timestamp + content-hash skip.
+        metadata=_teams_document_metadata(channel, top_message),
         external_access=external_access,
     )
 

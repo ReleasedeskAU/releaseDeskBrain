@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 from onyx.connectors.teams.connector import (
     _channel_display_name,
     _convert_thread_to_document,
+    _teams_author_display_name,
 )
 from onyx.connectors.teams.models import Body, From, Message, User
 
@@ -50,6 +51,15 @@ def test_convert_thread_tags_channel_display_name() -> None:
     ):
         doc = _convert_thread_to_document(MagicMock(), channel, [_thread_message()])
     assert doc is not None
-    assert doc.metadata == {"channel": "Release Ops"}
+    assert doc.metadata == {"channel": "Release Ops", "author": "Ada"}
     assert "id" not in doc.metadata
     assert "team" not in doc.metadata
+
+
+def test_teams_author_omitted_when_unknown() -> None:
+    unknown = _thread_message()
+    unknown.from_ = From(user=User(id="u2", display_name="Unknown User"))
+    assert _teams_author_display_name(unknown) is None
+    missing = _thread_message()
+    missing.from_ = None
+    assert _teams_author_display_name(missing) is None
