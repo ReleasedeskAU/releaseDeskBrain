@@ -531,52 +531,59 @@ def _collect_all_teams(
 
     For teams with special characters (&, (, )), uses client-side filtering
     with paginated search. For teams without special characters, uses efficient
-    OData server-side filtering.
+    OData server-side filtering. None or an empty list means all accessible teams.
 
     Args:
         graph_client: Authenticated Microsoft Graph client
-        requested: List of team names to find, or None for all teams
+        requested: List of team names to find, or None/empty for all teams
 
     Returns:
-        List of Team objects matching the requested names
+        List of Team objects matching the requested names (or all active teams)
+
+    Raises:
+        ValueError: If requested names are non-empty but no matching teams are found
     """
     teams: list[Team] = []
     next_url: str | None = None
 
+    # Treat [] the same as None. Connector __init__ normalizes None -> [].
+    requested_names = requested if requested else None
+
     # Determine filtering strategy based on Microsoft Graph limitations
-    if not requested:
-        # No specific teams requested - return empty list (avoid fetching all teams)
-        logger.info("No specific teams requested - returning empty list")
-        return []
-
-    _, safe_names, problematic_names = _can_use_odata_filter(requested)
-
-    if problematic_names and not safe_names:
-        # ALL requested teams have special characters - cannot use OData filtering
-        logger.info(
-            "All requested team names contain special characters (&, (, )) which require client-side filtering. Using basic /teams endpoint with pagination. Teams: %s",
-            problematic_names,
-        )
-        # Use unfiltered query with pagination limit to avoid fetching too many teams
+    if requested_names is None:
+        logger.info("No specific teams requested - fetching all accessible teams")
         use_client_side_filtering = True
         odata_filter = None
-    elif problematic_names and safe_names:
-        # Mixed scenario - need to fetch more teams to find the problematic ones
-        logger.info(
-            "Mixed team types: will use client-side filtering for all. Safe names: %s, Special char names: %s",
-            safe_names,
-            problematic_names,
-        )
-        use_client_side_filtering = True
-        odata_filter = None
-    elif safe_names:
-        # All names are safe - use OData filtering
-        logger.info("Using OData filtering for all requested teams: %s", safe_names)
-        use_client_side_filtering = False
-        odata_filter = _build_simple_odata_filter(safe_names)
     else:
-        # No valid names
-        return []
+        _, safe_names, problematic_names = _can_use_odata_filter(requested_names)
+
+        if problematic_names and not safe_names:
+            # ALL requested teams have special characters - cannot use OData filtering
+            logger.info(
+                "All requested team names contain special characters (&, (, )) which require client-side filtering. Using basic /teams endpoint with pagination. Teams: %s",
+                problematic_names,
+            )
+            # Use unfiltered query with pagination limit to avoid fetching too many teams
+            use_client_side_filtering = True
+            odata_filter = None
+        elif problematic_names and safe_names:
+            # Mixed scenario - need to fetch more teams to find the problematic ones
+            logger.info(
+                "Mixed team types: will use client-side filtering for all. Safe names: %s, Special char names: %s",
+                safe_names,
+                problematic_names,
+            )
+            use_client_side_filtering = True
+            odata_filter = None
+        elif safe_names:
+            # All names are safe - use OData filtering
+            logger.info("Using OData filtering for all requested teams: %s", safe_names)
+            use_client_side_filtering = False
+            odata_filter = _build_simple_odata_filter(safe_names)
+        else:
+            raise ValueError(
+                f"No Teams found matching the requested names: {requested_names}"
+            )
 
     # Track pagination to avoid fetching too many teams for client-side filtering
     max_pages = 200
@@ -620,7 +627,7 @@ def _collect_all_teams(
         filtered_teams = (
             team
             for team in team_collection
-            if _filter_team(team=team, requested=requested)
+            if _filter_team(team=team, requested=requested_names)
         )
         teams.extend(filtered_teams)
 
@@ -630,7 +637,6 @@ def _collect_all_teams(
             found_team_names = {
                 team.display_name for team in teams if team.display_name
             }
-            requested_set = set(requested)
 
             # Log progress every 10 pages to avoid excessive logging
             if page_count % 10 == 0:
@@ -640,16 +646,25 @@ def _collect_all_teams(
                     len(found_team_names),
                 )
 
-            # Stop if we found all requested teams or hit the page limit
-            if requested_set.issubset(found_team_names):
-                logger.info("Found all requested teams after %s pages", page_count)
-                break
+            if requested_names is not None:
+                requested_set = set(requested_names)
+                # Stop if we found all requested teams
+                if requested_set.issubset(found_team_names):
+                    logger.info("Found all requested teams after %s pages", page_count)
+                    break
+                if page_count >= max_pages:
+                    logger.warning(
+                        "Reached maximum page limit (%s) while searching for teams. Found: %s, Missing: %s",
+                        max_pages,
+                        found_team_names & requested_set,
+                        requested_set - found_team_names,
+                    )
+                    break
             elif page_count >= max_pages:
                 logger.warning(
-                    "Reached maximum page limit (%s) while searching for teams. Found: %s, Missing: %s",
+                    "Reached maximum page limit (%s) while fetching all teams. Collected %s team(s).",
                     max_pages,
-                    found_team_names & requested_set,
-                    requested_set - found_team_names,
+                    len(teams),
                 )
                 break
 
@@ -662,6 +677,11 @@ def _collect_all_teams(
             )
 
         next_url = team_collection._next_request_url
+
+    if requested_names is not None and not teams:
+        raise ValueError(
+            f"No Teams found matching the requested names: {requested_names}"
+        )
 
     return teams
 
