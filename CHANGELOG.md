@@ -41,6 +41,14 @@
 
 ### Fixed
 
+- Teams threads now tag ``channel`` with the Graph display name (same key as
+  Slack). Only documents indexed after this engine deploy get the tag. Sync Now
+  and a normal index-from-beginning will not backfill the existing corpus:
+  ``content_hash()`` covers ``doc_metadata``, not the tag dict, so unchanged
+  threads are skipped. Forced reprocess: targeted reindex that bypasses both
+  the timestamp gate and the content-hash gate, or delete/recreate the Teams
+  connector.
+
 - Teams indexing no longer fails the whole connector when Graph lists a team
   but ``GET /teams/{id}/channels`` returns 404 (``No threadId found for TeamId``).
   That team is skipped; other teams still index. 401/403 still fail the run.

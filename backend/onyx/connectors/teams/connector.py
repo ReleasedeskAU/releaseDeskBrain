@@ -427,6 +427,13 @@ def _build_simple_odata_filter(safe_names: list[str]) -> str | None:
     return " or ".join(filter_parts)
 
 
+def _channel_display_name(channel: Channel) -> str:
+    """Teams channel display name for titles and the ``channel`` tag (same key as Slack)."""
+    raw = channel.properties.get("displayName", "Unknown")
+    name = raw.strip() if isinstance(raw, str) else ""
+    return name or "Unknown"
+
+
 def _construct_semantic_identifier(channel: Channel, top_message: Message) -> str:
     top_message_user_name: str
 
@@ -441,7 +448,7 @@ def _construct_semantic_identifier(channel: Channel, top_message: Message) -> st
 
     top_message_content = top_message.body.content or ""
     top_message_subject = top_message.subject or "Unknown Subject"
-    channel_name = channel.properties.get("displayName", "Unknown")
+    channel_name = _channel_display_name(channel)
 
     try:
         snippet = parse_html_page_basic(top_message_content.rstrip())
@@ -509,7 +516,9 @@ def _convert_thread_to_document(
         doc_created_at=top_message.created_date_time,
         doc_updated_at=most_recent_message_datetime,
         primary_owners=expert_infos,
-        metadata={},
+        # Same key as Slack: the room display name. Existing docs stay untagged until
+        # a reprocess that bypasses timestamp + content-hash skip (hash ignores metadata).
+        metadata={"channel": _channel_display_name(channel)},
         external_access=external_access,
     )
 
