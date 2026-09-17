@@ -36,6 +36,11 @@
 
 ### Fixed
 
+- Teams indexing no longer fails the whole connector when Graph lists a team
+  but ``GET /teams/{id}/channels`` returns 404 (``No threadId found for TeamId``).
+  That team is skipped; other teams still index. 401/403 still fail the run.
+  Rebuild the engine and re-run Teams sync.
+
 - Slack indexing no longer fails the whole connector on ``conversations.join``.
   Private channels the bot is not in are skipped (join is invite-only). Public
   join failures that are not a dead token (missing ``channels:join``, archived,

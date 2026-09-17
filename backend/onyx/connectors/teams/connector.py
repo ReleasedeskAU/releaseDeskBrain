@@ -236,10 +236,15 @@ class TeamsConnector(
         # during the previous invocation of `TeamsConnector.load_from_checkpoint`,
         # meaning that this function wouldn't have been called in the first place.
         todo_team_id = todos.pop()
-        team = _get_team_by_id(
+        team = _load_team_or_skip(
             graph_client=self.graph_client,
             team_id=todo_team_id,
         )
+        if team is None:
+            return TeamsCheckpoint(
+                todo_team_ids=todos,
+                has_more=bool(todos),
+            )
         channels = _collect_all_channels_from_team(
             team=team,
         )
@@ -753,6 +758,35 @@ def _filter_team(
     return not expiration and not deleted
 
 
+def _is_graph_not_found(exc: BaseException) -> bool:
+    """True when Microsoft Graph returned 404.
+
+    GET /teams can list a directory object that is not a usable Team. The
+    channels URL then 404s with "No threadId found for TeamId". That is not a
+    credential failure — skip that team and keep indexing the others.
+    """
+    if not isinstance(exc, ClientRequestException) or exc.response is None:
+        return False
+    return exc.response.status_code == 404
+
+
+def _load_team_or_skip(graph_client: GraphClient, team_id: str) -> Team | None:
+    """Load one team by id. None means Graph no longer has a usable team.
+
+    401/403 still raise so a dead token fails the run.
+    """
+    try:
+        return _get_team_by_id(graph_client=graph_client, team_id=team_id)
+    except ClientRequestException as e:
+        if not _is_graph_not_found(e):
+            raise
+        logger.warning("Skipping team %s: Graph returned 404.", team_id)
+        return None
+    except ValueError:
+        logger.warning("Skipping team %s: not returned by Graph.", team_id)
+        return None
+
+
 def _get_team_by_id(
     graph_client: GraphClient,
     team_id: str,
@@ -772,28 +806,48 @@ def _get_team_by_id(
 def _collect_all_channels_from_team(
     team: Team,
 ) -> list[Channel]:
+    """Channels for one team. Graph 404 (no channel thread) returns [].
+
+    401/403 still raise. Does not guess channel names.
+    """
     if not team.id:
         raise RuntimeError(f"The {team=} has an empty `id` field")
 
     channels: list[Channel] = []
     next_url = None
 
-    while True:
-        query = team.channels.get_all(
-            # explicitly needed because of incorrect type definitions provided by the `office365` library
-            page_loaded=lambda _: None
-        )
-        if next_url:
-            url = next_url
-            query = query.before_execute(partial(_update_request_url, next_url=url))
+    try:
+        while True:
+            query = team.channels.get_all(
+                # explicitly needed because of incorrect type definitions provided by the `office365` library
+                page_loaded=lambda _: None
+            )
+            if next_url:
+                url = next_url
+                query = query.before_execute(partial(_update_request_url, next_url=url))
 
-        channel_collection = execute_query_with_retry(
-            query, method_name="_collect_all_channels_from_team"
-        )
-        channels.extend(channel for channel in channel_collection if channel.id)
+            channel_collection = execute_query_with_retry(
+                query, method_name="_collect_all_channels_from_team"
+            )
+            channels.extend(channel for channel in channel_collection if channel.id)
 
-        if not channel_collection.has_next:
-            break
+            if not channel_collection.has_next:
+                break
+
+            if not isinstance(channel_collection._next_request_url, str):
+                raise ValueError(
+                    f"The next request url field should be a string, instead got {type(channel_collection._next_request_url)}"
+                )
+
+            next_url = channel_collection._next_request_url
+    except ClientRequestException as e:
+        if not _is_graph_not_found(e):
+            raise
+        logger.warning(
+            "Skipping team %s: Graph returned 404 for channels (listed team has no channel thread).",
+            team.id,
+        )
+        return []
 
     return channels
 
