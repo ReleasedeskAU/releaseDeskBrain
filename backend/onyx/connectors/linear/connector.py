@@ -14,6 +14,9 @@ from onyx.configs.app_configs import (
     LINEAR_CLIENT_SECRET,
 )
 from onyx.configs.constants import DocumentSource
+from onyx.connectors.cross_connector_utils.attribution import (
+    format_attributed_message,
+)
 from onyx.connectors.cross_connector_utils.miscellaneous_utils import (
     get_oauth_callback_uri,
     time_str_to_utc,
@@ -45,6 +48,25 @@ _ACCESS_TOKEN = "access_token"
 _EXPIRE_AT = "expire_at"
 _REFRESH_TOKEN = "refresh_token"
 _EXPIRES_IN = "expires_in"
+
+
+def _linear_comment_speaker_name(comment: dict[str, Any]) -> str | None:
+    """Linear comment author display name. Never email."""
+    user = comment.get("user")
+    if not isinstance(user, dict):
+        return None
+    raw = user.get("name")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
+
+
+def _linear_comment_section_text(comment: dict[str, Any]) -> str:
+    """One folded Linear comment as ``Name: text``."""
+    return format_attributed_message(
+        _linear_comment_speaker_name(comment),
+        comment.get("body") or "",
+    )
 
 
 def _make_query(request_body: dict[str, Any], api_key: str) -> requests.Response:
@@ -291,6 +313,9 @@ class LinearConnector(LoadConnector, PollConnector, OAuthConnector):
                                 nodes {
                                     url
                                     body
+                                    user {
+                                        name
+                                    }
                                 }
                             }
                         }
@@ -332,11 +357,11 @@ class LinearConnector(LoadConnector, PollConnector, OAuthConnector):
                     )
                 ]
 
-                # Add comment sections
+                # Add comment sections. Speaker is on the text; GraphQL omits email.
                 sections.extend(
                     TextSection(
-                        link=node["url"],
-                        text=comment["body"] or "",
+                        link=comment.get("url") or node["url"],
+                        text=_linear_comment_section_text(comment),
                     )
                     for comment in node["comments"]["nodes"]
                 )

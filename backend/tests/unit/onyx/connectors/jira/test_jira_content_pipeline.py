@@ -223,6 +223,32 @@ def test_comment_pagination_follows_next_page_token() -> None:
     )
 
 
+def test_get_comment_strs_prefixes_display_name_not_email() -> None:
+    issue = _issue_from_raw(
+        {
+            "key": "RD-24",
+            "fields": {
+                "comment": {
+                    "total": 2,
+                    "comments": [
+                        {
+                            "body": "ship it",
+                            "author": {
+                                "displayName": "Ada",
+                                "emailAddress": "ada@example.com",
+                            },
+                        },
+                        {"body": "no name"},
+                    ],
+                }
+            },
+        }
+    )
+    lines = get_comment_strs(issue)
+    assert lines == ["Ada: ship it", "Unknown: no name"]
+    assert all("ada@example.com" not in line for line in lines)
+
+
 def test_get_comment_strs_pages_when_first_page_is_truncated() -> None:
     issue = _issue_from_raw(
         {
@@ -249,7 +275,11 @@ def test_get_comment_strs_pages_when_first_page_is_truncated() -> None:
     }
     client._session.get.return_value = resp
 
-    assert get_comment_strs(issue, jira_client=client) == ["c1", "c2", "c3"]
+    assert get_comment_strs(issue, jira_client=client) == [
+        "Unknown: c1",
+        "Unknown: c2",
+        "Unknown: c3",
+    ]
 
 
 def test_truncated_comments_without_client_raise() -> None:
@@ -305,6 +335,7 @@ def test_description_getattr_failure_does_not_drop_title() -> None:
     assert "Keep this title" in doc.title
     assert "Keep this description" in doc.sections[0].text
     assert "Keep this comment" in doc.sections[0].text
+    assert "Unknown: Keep this comment" in doc.sections[0].text
 
 
 def test_comment_read_failure_keeps_title_and_description(

@@ -13,6 +13,9 @@ from jira import JIRA
 from jira.exceptions import JIRAError
 from jira.resources import CustomFieldOption, Issue, User
 
+from onyx.connectors.cross_connector_utils.attribution import (
+    format_attributed_message,
+)
 from onyx.connectors.cross_connector_utils.miscellaneous_utils import scoped_url
 from onyx.connectors.cross_connector_utils.rate_limit_wrapper import (
     RateLimitTriedTooManyTimesError,
@@ -687,7 +690,14 @@ def get_comment_strs(
     comment_email_blacklist: tuple[str, ...] = (),
     jira_client: JIRA | None = None,
 ) -> list[str]:
-    """All comment bodies for an issue. Pages the comment API when a page is truncated."""
+    """Attributed ``Name: text`` lines for every comment on an issue.
+
+    Pages the comment API when ``jira_client`` is set and the first page is
+    truncated. Author emails are used only for the blacklist and never written
+    into the returned text.
+
+    Raises RuntimeError if a known comment total cannot be fully fetched.
+    """
     issue_key = jira_issue_key(issue)
     comment_field = best_effort_get_field_from_issue(issue, "comment")
     comments, total = _comment_records(comment_field)
@@ -705,13 +715,20 @@ def get_comment_strs(
     bodies: list[str] = []
     for comment in comments:
         try:
-            author_email = jira_user_email(_comment_author(comment))
+            author = _comment_author(comment)
+            author_email = jira_user_email(author)
             if author_email and author_email in comment_email_blacklist:
                 continue
-            bodies.append(_comment_body_text(comment))
+            # Display name only — email is for the blacklist, never the body.
+            bodies.append(
+                format_attributed_message(
+                    jira_user_display_name(author),
+                    _comment_body_text(comment),
+                )
+            )
         except Exception as exc:
             logger.error("Failed to process comment on %s: %s", issue_key, exc)
-            bodies.append("[unreadable comment]")
+            bodies.append(format_attributed_message(None, "[unreadable comment]"))
     return bodies
 
 

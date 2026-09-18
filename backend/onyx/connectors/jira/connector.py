@@ -771,7 +771,7 @@ def process_jira_issue(
         logger.exception("Failed reading comments for %s", issue_key)
 
     ticket_content = f"{description}\n" + "\n".join(
-        [f"Comment: {comment}" for comment in comments if comment]
+        comment for comment in comments if comment
     )
     custom_field_lines = (
         extract_populated_custom_field_lines(issue, custom_field_names)

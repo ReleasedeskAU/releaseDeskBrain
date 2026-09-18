@@ -5,6 +5,9 @@ import requests
 
 from onyx.configs.app_configs import INDEX_BATCH_SIZE, REQUEST_TIMEOUT_SECONDS
 from onyx.configs.constants import DocumentSource
+from onyx.connectors.cross_connector_utils.attribution import (
+    format_attributed_message,
+)
 from onyx.connectors.cross_connector_utils.rate_limit_wrapper import rate_limit_builder
 from onyx.connectors.interfaces import (
     GenerateDocumentsOutput,
@@ -22,6 +25,17 @@ from onyx.connectors.models import (
 from onyx.utils.retry_wrapper import retry_builder
 
 CLICKUP_API_BASE_URL = "https://api.clickup.com/api/v2"
+
+
+def _clickup_comment_speaker_name(comment: dict[str, Any]) -> str | None:
+    """ClickUp comment display name is ``user.username``. Never email."""
+    user = comment.get("user")
+    if not isinstance(user, dict):
+        return None
+    raw = user.get("username")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
 
 
 class ClickupConnector(LoadConnector, PollConnector):
@@ -71,7 +85,10 @@ class ClickupConnector(LoadConnector, PollConnector):
         comments = [
             TextSection(
                 link=f"https://app.clickup.com/t/{task_id}?comment={comment_dict['id']}",
-                text=comment_dict["comment_text"],
+                text=format_attributed_message(
+                    _clickup_comment_speaker_name(comment_dict),
+                    comment_dict.get("comment_text") or "",
+                ),
             )
             for comment_dict in response["comments"]
         ]
