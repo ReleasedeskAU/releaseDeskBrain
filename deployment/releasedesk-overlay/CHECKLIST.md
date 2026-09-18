@@ -70,7 +70,7 @@ docker compose \
      `../releasedesk-overlay/docker-compose.releasedesk.yml`. Overlay last.
    - Confirm these containers are up: `api_server`, `background`, `relational_db`, `cache`, `opensearch`, `nginx`.
    - Confirm these are **not** running: `web_server`, `inference_model_server`, `indexing_model_server`, `minio`, Vespa.
-   - Optional reranker: `pull reranker` then `up -d --no-deps --wait --wait-timeout 600 reranker` only (3g cap; 2g OOMs on ONNX load). Internal `http://reranker:80`. Query+passages stay on the VM; weights come from Hugging Face Hub. Does not recreate other containers. Do not `build reranker`.
+   - Optional reranker: `pull reranker` then `up -d --no-deps --wait --wait-timeout 600 reranker` only (5g / 2 CPU; 3g / 1 CPU sat the cgroup). Internal `http://reranker:80`. Query+passages stay on the VM; weights come from Hugging Face Hub. Does not recreate other containers. Do not `build reranker`.
    - `GET /health` through nginx (port 3000 or 80) returns OK.
    - `GET /docs` works only while `ENABLE_PUBLIC_DOCS=true`.
 

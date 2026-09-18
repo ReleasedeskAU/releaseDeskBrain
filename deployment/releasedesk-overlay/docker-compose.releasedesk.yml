@@ -159,10 +159,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: ${RERANKER_CPU_LIMIT:-1.0}
-          # 2g OOMs while loading bge-reranker-base ONNX (exit 137). 3g still
-          # fits D4as_v5 available RAM without changing other service limits.
-          memory: ${RERANKER_MEM_LIMIT:-3g}
+          cpus: ${RERANKER_CPU_LIMIT:-2.0}
+          # 3g / 1 CPU sat the cgroup and 30-candidate rerank was ~7.5s.
+          # 5g / 2 CPU uses host headroom without changing other service limits.
+          memory: ${RERANKER_MEM_LIMIT:-5g}
 
 volumes:
   reranker_model_cache:

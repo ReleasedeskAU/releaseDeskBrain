@@ -9,7 +9,8 @@
   Docker network as ``http://reranker:80``. Query text and candidate
   passages stay on the VM; model weights download from Hugging Face Hub
   on first start. Not wired to Ask/search (no ``api_server`` env change).
-  Cgroup cap is 3g (2g OOMs while loading ONNX). Start with scoped
+  Cgroup cap is 5g / 2 CPU (3g / 1 CPU sat the cgroup; 30-candidate
+  rerank was ~7.5s). Start with scoped
   ``up -d --no-deps --wait reranker`` — do not recreate existing containers.
 
 - Ask can fetch one document's indexed body via ``POST /admin/document-content``
