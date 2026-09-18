@@ -356,13 +356,12 @@ def _thread_root_ts(thread: ThreadType, fallback: str) -> str:
     return ts if isinstance(ts, str) and ts else fallback
 
 
-def _fetch_thread_or_row(
-    message: MessageType,
+def _try_get_thread(
     slack_client: SlackSourceOperations,
     channel: ChannelType,
     lookup_ts: str,
-) -> ThreadType:
-    """conversations.replies for lookup_ts, or the history row when Slack errors."""
+) -> ThreadType | None:
+    """conversations.replies for lookup_ts. None when Slack has no thread."""
     try:
         thread = get_thread(
             slack_client=slack_client, channel=channel, thread_id=lookup_ts
@@ -376,8 +375,31 @@ def _fetch_thread_or_row(
             lookup_ts,
             slug or "unknown",
         )
-        return [message]
-    return thread or [message]
+        return None
+    return thread or None
+
+
+def _merge_thread(primary: ThreadType, extra: ThreadType) -> ThreadType:
+    """Parent first, then other messages by ts. Keeps reply rows Slack omitted."""
+    by_ts: dict[str, MessageType] = {}
+    for msg in primary + extra:
+        ts = msg.get("ts")
+        if isinstance(ts, str) and ts:
+            by_ts[ts] = msg
+    if not by_ts:
+        return primary or extra
+    root: str | None = None
+    for msg in by_ts.values():
+        hinted = _message_thread_ts(msg)
+        if hinted:
+            root = hinted
+            break
+    if root is None:
+        root = min(by_ts, key=lambda ts: float(ts))
+    rest = [msg for ts, msg in by_ts.items() if ts != root]
+    rest.sort(key=lambda msg: float(msg.get("ts") or 0))
+    root_msg = by_ts.get(root)
+    return ([root_msg] if root_msg else []) + rest
 
 
 def _history_thread(
@@ -387,18 +409,35 @@ def _history_thread(
 ) -> ThreadType:
     """Full thread for a conversations.history row.
 
-    History can include a channel-visible reply without top-level thread_ts
-    (those rows index as channel__reply_ts and their permalinks omit
-    ?thread_ts=). conversations.replies accepts a reply ts and returns the
-    parent first. If it returns only the reply but sets thread_ts, fetch the
-    parent so the document is not reply-only under the parent id.
+    History often omits replies. conversations.replies(reply_ts) can return
+    only that reply; refetch the parent ts and merge so the parent document
+    keeps reply text. A failed parent fetch leaves the reply-only payload so
+    the caller can skip minting channel__reply_ts.
     """
-    lookup_ts = _message_thread_ts(message) or message["ts"]
-    thread = _fetch_thread_or_row(message, slack_client, channel, lookup_ts)
+    # Always the history row's own ts. Using thread_ts first skips the reply
+    # lookup Slack needs when replies(parent) is parent-only.
+    thread = _try_get_thread(slack_client, channel, message["ts"]) or [message]
     root_ts = _thread_root_ts(thread, message["ts"])
     first_ts = thread[0].get("ts") if thread else None
     if root_ts != first_ts:
-        thread = _fetch_thread_or_row(message, slack_client, channel, root_ts)
+        parent_thread = _try_get_thread(slack_client, channel, root_ts)
+        if parent_thread:
+            thread = _merge_thread(parent_thread, thread)
+    # Parent history rows include reply_count / latest_reply even when
+    # conversations.replies(parent) returned the parent only (cold reindex:
+    # no previously indexed thread to merge against).
+    latest_reply = message.get("latest_reply")
+    reply_count = message.get("reply_count")
+    if (
+        isinstance(latest_reply, str)
+        and latest_reply
+        and isinstance(reply_count, int)
+        and reply_count > 0
+        and not any(msg.get("ts") == latest_reply for msg in thread)
+    ):
+        extra = _try_get_thread(slack_client, channel, latest_reply)
+        if extra:
+            thread = _merge_thread(thread, extra)
     return thread
 
 
