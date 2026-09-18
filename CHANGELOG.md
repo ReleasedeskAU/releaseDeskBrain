@@ -1,11 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
 - Slack Ask field schema (POC): Slack declares optional tags ``channel`` and
   ``author`` in ``FIELD_SCHEMA``. ``POST /admin/document-fields`` with
   ``source=slack`` returns that schema intersected with the connector instance
   ``indexed_field_selection`` (NULL = both tags, ``[]`` = none). Other sources
   still use ``ALLOWED_TAG_KEYS``. Unchecking a tag does not purge stored tags
-  or force a re-index. No onboarding checkbox UI in this pass.
+  or force a re-index. No onboarding checkbox UI in this pass. Alembic merge
+  ``d8a41c2e9f70`` joins this migration with ``has_been_indexed`` so
+  ``upgrade head`` has a single head.
+
 
 
 - Admin ``POST /admin/search`` accepts optional ``retrieval=hybrid`` (default
