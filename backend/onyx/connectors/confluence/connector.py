@@ -35,6 +35,9 @@ from onyx.connectors.confluence.utils import (
     validate_attachment_filetype,
 )
 from onyx.connectors.credentials_provider import OnyxStaticCredentialsProvider
+from onyx.connectors.cross_connector_utils.attribution import (
+    format_attributed_message,
+)
 from onyx.connectors.cross_connector_utils.miscellaneous_utils import (
     is_atlassian_date_error,
 )
@@ -72,9 +75,26 @@ from onyx.indexing.indexing_heartbeat import IndexingHeartbeatInterface
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
+
+
+def _confluence_comment_speaker_name(comment: dict[str, Any]) -> str | None:
+    """Display name from comment version.by. Never email."""
+    version = comment.get("version")
+    if not isinstance(version, dict):
+        return None
+    author = version.get("by")
+    if not isinstance(author, dict):
+        return None
+    raw = author.get("displayName")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
+
+
 # Potential Improvements
 # 1. Segment into Sections for more accurate linking, can split by headers but make sure no text/ordering is lost
-_COMMENT_EXPANSION_FIELDS = ["body.storage.value"]
+# version.by.displayName is the comment author; same field as page author.
+_COMMENT_EXPANSION_FIELDS = ["body.storage.value", "version"]
 _PAGE_EXPANSION_FIELDS = [
     "body.storage.value",
     "version",
@@ -509,7 +529,7 @@ class ConfluenceConnector(
         return attachment_query
 
     def _get_comment_string_for_page_id(self, page_id: str) -> str:
-        comment_string = ""
+        comment_lines: list[str] = []
         comment_cql = f"type=comment and container='{page_id}'"
         comment_cql += self.cql_label_filter
         expand = ",".join(_COMMENT_EXPANSION_FIELDS)
@@ -518,13 +538,17 @@ class ConfluenceConnector(
             cql=comment_cql,
             expand=expand,
         ):
-            comment_string += "\nComment:\n"
-            comment_string += extract_text_from_confluence_html(
+            body = extract_text_from_confluence_html(
                 confluence_client=self.confluence_client,
                 confluence_object=comment,
                 fetched_titles=set(),
             )
-        return comment_string
+            comment_lines.append(
+                format_attributed_message(
+                    _confluence_comment_speaker_name(comment), body
+                )
+            )
+        return "\n".join(comment_lines)
 
     def _convert_page_to_document(
         self, page: dict[str, Any]

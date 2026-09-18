@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- Folded comments on Confluence pages, Jira issues, Linear issues, and ClickUp
+  tasks now prefix each comment with the speaker display name (``Name: text``,
+  ``Unknown`` when unresolved) via a shared ``format_attributed_message`` helper.
+  Re-index those sources from beginning after deploy. GitHub comments are not
+  fetched today (unchanged). Zendesk/Asana keep their existing ``Comment by``
+  lines. Slack/Teams/Discourse wait for the next batch.
+
 - Slack thread replies were dropped on a cold reindex when
   ``conversations.replies(parent)`` returned the parent only (or the parent
   fetch failed). History lookup now uses the row's own ``ts`` first, merges a

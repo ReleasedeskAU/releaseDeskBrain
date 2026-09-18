@@ -31,7 +31,15 @@ def test_get_task_comments_uses_relative_endpoint() -> None:
                 {
                     "id": "comment-1",
                     "comment_text": "Looks good",
-                }
+                    "user": {
+                        "username": "Ada",
+                        "email": "ada@example.com",
+                    },
+                },
+                {
+                    "id": "comment-2",
+                    "comment_text": "no name",
+                },
             ]
         }
     )
@@ -43,4 +51,6 @@ def test_get_task_comments_uses_relative_endpoint() -> None:
 
     mock_get.assert_called_once()
     assert mock_get.call_args.args[0] == f"{CLICKUP_API_BASE_URL}/task/task-1/comment"
-    assert sections[0].text == "Looks good"
+    assert sections[0].text == "Ada: Looks good"
+    assert sections[1].text == "Unknown: no name"
+    assert "ada@example.com" not in sections[0].text
