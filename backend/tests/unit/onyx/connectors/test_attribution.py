@@ -14,6 +14,9 @@ _FOLD_SITES_REQUIRING_ATTRIBUTION = (
     "onyx/connectors/jira/utils.py",
     "onyx/connectors/linear/connector.py",
     "onyx/connectors/clickup/connector.py",
+    "onyx/connectors/slack/connector.py",
+    "onyx/connectors/teams/connector.py",
+    "onyx/connectors/discourse/connector.py",
 )
 
 
@@ -40,3 +43,25 @@ def test_fold_sites_import_format_attributed_message() -> None:
     assert not missing, (
         "Fold sites must call format_attributed_message: " + ", ".join(missing)
     )
+
+
+def test_slack_thread_sections_use_attributed_helper() -> None:
+    source = (_BACKEND_ROOT / "onyx/connectors/slack/connector.py").read_text(
+        encoding="utf-8"
+    )
+    assert "text=_attributed_slack_section_text(" in source
+    assert 'text=slack_cleaner.index_clean(m["text"])' not in source
+
+
+def test_teams_thread_text_uses_attributed_helper() -> None:
+    source = (_BACKEND_ROOT / "onyx/connectors/teams/connector.py").read_text(
+        encoding="utf-8"
+    )
+    assert "format_attributed_message(_teams_message_speaker_name(message)" in source
+
+
+def test_discourse_posts_use_attributed_helper() -> None:
+    source = (_BACKEND_ROOT / "onyx/connectors/discourse/connector.py").read_text(
+        encoding="utf-8"
+    )
+    assert "text=_discourse_post_section_text(post)" in source

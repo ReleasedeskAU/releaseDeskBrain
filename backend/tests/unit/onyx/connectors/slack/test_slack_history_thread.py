@@ -13,10 +13,12 @@ import pytest
 from slack_sdk.errors import SlackApiError
 
 from onyx.connectors.slack.connector import (
+    _attributed_slack_section_text,
     _doc_id_ts_for_history_message,
     _history_thread,
     _message_thread_ts,
     _message_to_doc,
+    _slack_speaker_name,
     _thread_root_ts,
 )
 from onyx.connectors.slack.models import ChannelType, MessageType
@@ -281,8 +283,8 @@ def test_cold_reindex_newest_first_keeps_reply_in_parent_doc() -> None:
     assert doc_reply is not None
     assert doc_reply.id == f"{CHANNEL_ID}__{PARENT}"
     texts = [section.text for section in doc_reply.sections]
-    assert "TESTFACT-A2" in texts
-    assert "reply 1 of TESTFACT-A2" in texts
+    assert "Unknown: TESTFACT-A2" in texts
+    assert "Unknown: reply 1 of TESTFACT-A2" in texts
     assert doc_parent is None
     assert reason_parent is None
     assert root_parent == PARENT
@@ -321,3 +323,54 @@ def test_cold_reindex_parent_row_merges_latest_reply_when_replies_parent_only() 
     ]
     assert [msg["ts"] for msg in thread] == [PARENT, REPLY_B]
     assert thread[1]["text"] == "reply 2 of TESTFACT-A2 in reply box"
+
+
+def test_attributed_slack_section_prefixes_speaker() -> None:
+    cleaner = MagicMock()
+    cleaner.index_clean.side_effect = lambda text: text
+    expert = MagicMock()
+    expert.first_name = None
+    expert.last_name = None
+    expert.display_name = "Ada"
+    with patch(
+        "onyx.connectors.slack.connector.expert_info_from_slack_id",
+        return_value=expert,
+    ):
+        text = _attributed_slack_section_text(
+            _msg(PARENT, text="hello"),
+            cleaner,
+            MagicMock(),
+            {},
+        )
+    assert text == "Ada: hello"
+
+
+def test_attributed_slack_section_unknown_when_missing() -> None:
+    cleaner = MagicMock()
+    cleaner.index_clean.side_effect = lambda text: text
+    with patch(
+        "onyx.connectors.slack.connector.expert_info_from_slack_id",
+        return_value=None,
+    ):
+        text = _attributed_slack_section_text(
+            _msg(PARENT, text="hello"),
+            cleaner,
+            MagicMock(),
+            {},
+        )
+    assert text == "Unknown: hello"
+
+
+def test_slack_speaker_skips_email_fallback() -> None:
+    expert = MagicMock()
+    expert.first_name = None
+    expert.last_name = None
+    expert.display_name = None
+    expert.email = "ada@example.com"
+    expert.get_semantic_name.return_value = "ada@example.com"
+    with patch(
+        "onyx.connectors.slack.connector.expert_info_from_slack_id",
+        return_value=expert,
+    ):
+        assert _slack_speaker_name("U1", MagicMock(), {}) is None
+

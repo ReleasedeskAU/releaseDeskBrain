@@ -9,6 +9,9 @@ from requests import Response
 
 from onyx.configs.app_configs import INDEX_BATCH_SIZE, REQUEST_TIMEOUT_SECONDS
 from onyx.configs.constants import DocumentSource
+from onyx.connectors.cross_connector_utils.attribution import (
+    format_attributed_message,
+)
 from onyx.connectors.cross_connector_utils.miscellaneous_utils import time_str_to_utc
 from onyx.connectors.cross_connector_utils.rate_limit_wrapper import rate_limit_builder
 from onyx.connectors.interfaces import (
@@ -29,6 +32,23 @@ from onyx.utils.logger import setup_logger
 from onyx.utils.retry_wrapper import retry_builder
 
 logger = setup_logger()
+
+
+def _discourse_speaker_name(post: dict) -> str | None:
+    """Discourse display name for a post. Prefer name, then username. Never email."""
+    raw = post.get("name") or post.get("username")
+    if not isinstance(raw, str):
+        return None
+    name = raw.strip()
+    return name or None
+
+
+def _discourse_post_section_text(post: dict) -> str:
+    """Index body for one Discourse post: ``{speaker}: {cleaned html}``."""
+    return format_attributed_message(
+        _discourse_speaker_name(post),
+        parse_html_page_basic(post["cooked"]),
+    )
 
 
 class DiscoursePerms(BaseModel):
@@ -117,7 +137,7 @@ class DiscourseConnector(PollConnector):
                     responders.append(BasicExpertInfo(display_name=responder_name))
 
             sections.append(
-                TextSection(link=topic_url, text=parse_html_page_basic(post["cooked"]))
+                TextSection(link=topic_url, text=_discourse_post_section_text(post))
             )
         category_name = self.category_id_map.get(topic["category_id"], {}).get("name")
 
