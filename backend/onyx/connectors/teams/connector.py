@@ -13,6 +13,9 @@ from office365.teams.channels.channel import Channel
 from office365.teams.team import Team
 
 from onyx.configs.constants import DocumentSource
+from onyx.connectors.cross_connector_utils.attribution import (
+    format_attributed_message,
+)
 from onyx.connectors.exceptions import (
     ConnectorValidationError,
     CredentialExpiredError,
@@ -447,6 +450,14 @@ def _teams_author_display_name(top_message: Message) -> str | None:
     return name[:_AUTHOR_TAG_MAX_CHARS]
 
 
+def _teams_message_speaker_name(message: Message) -> str | None:
+    """Graph display name for a Teams message author. Never email."""
+    if not message.from_ or not message.from_.user:
+        return None
+    name = (message.from_.user.display_name or "").strip()
+    return name or None
+
+
 def _teams_document_metadata(channel: Channel, top_message: Message) -> dict[str, str]:
     """Indexed Teams tags: channel always; author only when Graph sent a display name."""
     metadata = {"channel": _channel_display_name(channel)}
@@ -511,9 +522,12 @@ def _convert_thread_to_document(
         most_recent_message_datetime = sorted_thread[0].created_date_time
 
     for message in thread:
-        # Add text and a newline
         if message.body.content:
-            thread_text += parse_html_page_basic(message.body.content)
+            body = parse_html_page_basic(message.body.content)
+            thread_text += (
+                format_attributed_message(_teams_message_speaker_name(message), body)
+                + "\n"
+            )
 
         # If it has a subject, that means its the top level post message, so grab its id, url, and subject
         if message.subject:

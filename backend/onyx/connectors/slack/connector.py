@@ -20,6 +20,9 @@ from onyx.configs.app_configs import (
     SLACK_NUM_THREADS,
 )
 from onyx.configs.constants import DocumentSource
+from onyx.connectors.cross_connector_utils.attribution import (
+    format_attributed_message,
+)
 from onyx.connectors.exceptions import (
     ConnectorValidationError,
     CredentialExpiredError,
@@ -57,6 +60,7 @@ from onyx.connectors.slack.source_operations import (
 )
 from onyx.connectors.slack.utils import (
     FIELD_SCHEMA,
+    FetchUserInfo,
     SlackTextCleaner,
     expert_info_from_slack_id,
     slack_document_metadata,
@@ -71,6 +75,35 @@ from onyx.utils.retry_after import parse_retry_after_seconds
 logger = setup_logger()
 
 _SLACK_LIMIT = 900
+
+
+def _slack_speaker_name(
+    user_id: str | None,
+    fetch_user_info: FetchUserInfo,
+    user_cache: dict[str, BasicExpertInfo | None],
+) -> str | None:
+    """Display name for a Slack message author. Never email (get_semantic_name falls back to it)."""
+    info = expert_info_from_slack_id(user_id, fetch_user_info, user_cache)
+    if info is None:
+        return None
+    if info.first_name and info.last_name:
+        name = info.get_semantic_name()
+    else:
+        name = (info.display_name or info.first_name or "").strip()
+    return name or None
+
+
+def _attributed_slack_section_text(
+    message: MessageType,
+    slack_cleaner: SlackTextCleaner,
+    fetch_user_info: FetchUserInfo,
+    user_cache: dict[str, BasicExpertInfo | None],
+) -> str:
+    """Index body for one Slack message: ``{speaker}: {cleaned text}``."""
+    return format_attributed_message(
+        _slack_speaker_name(message.get("user"), fetch_user_info, user_cache),
+        slack_cleaner.index_clean(cast(str, message.get("text", ""))),
+    )
 
 
 class SlackCheckpoint(ConnectorCheckpoint):
@@ -541,7 +574,12 @@ def thread_to_doc(
                     team_id=channel_team,
                     team_id_to_url=team_id_to_url,
                 ),
-                text=slack_cleaner.index_clean(m["text"]),
+                text=_attributed_slack_section_text(
+                    m,
+                    slack_cleaner,
+                    slack_client.fetch_user_info,
+                    user_cache,
+                ),
             )
             for m in thread
         ],

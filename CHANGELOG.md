@@ -17,7 +17,8 @@
   ``Unknown`` when unresolved) via a shared ``format_attributed_message`` helper.
   Re-index those sources from beginning after deploy. GitHub comments are not
   fetched today (unchanged). Zendesk/Asana keep their existing ``Comment by``
-  lines. Slack/Teams/Discourse wait for the next batch.
+  lines. Slack threads, Teams threads, and Discourse topics now prefix each
+  message/post the same way; re-index those sources from beginning after deploy.
 
 - Slack thread replies were dropped on a cold reindex when
   ``conversations.replies(parent)`` returned the parent only (or the parent
