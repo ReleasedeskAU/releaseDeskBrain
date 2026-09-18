@@ -353,6 +353,7 @@ def _documents_with_keys(
             extras={
                 **_projection_extras(projection.get(doc_id, {})),
                 "source": sources.get(doc_id),
+                "document_id": doc_id,
             },
         )
         for doc_id in doc_ids

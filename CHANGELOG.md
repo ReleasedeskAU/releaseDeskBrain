@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- Ask can fetch one document's indexed body via ``POST /admin/document-content``
+  (OpenSearch ``document_id``, ACL + tenant filters matching admin search,
+  16-chunk / 24k-char cap, ``truncated`` flag). ACL miss returns ``found:
+  false``. Body text is not logged. ``list_documents_matching`` rows now include
+  ``document_id``.
+
 ### Fixed
 
 - Folded comments on Confluence pages, Jira issues, Linear issues, and ClickUp

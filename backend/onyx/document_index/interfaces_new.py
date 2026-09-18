@@ -340,7 +340,7 @@ class IdRetrievalCapable(abc.ABC):
         # TODO(andrei): This is temporary, we will not expose this in the long
         # run.
         batch_retrieval: bool = False,
-        # TODO(andrei): Add a param for whether to retrieve hidden docs.
+        include_hidden: bool = False,
     ) -> list[InferenceChunk]:
         """Fetches chunk(s) based on document ID.
 
@@ -353,6 +353,10 @@ class IdRetrievalCapable(abc.ABC):
         Args:
             chunk_requests: Requests containing the document ID and the chunk
                 range to retrieve.
+            filters: ACL, tenant, and source filters.
+            batch_retrieval: Legacy Vespa batch flag.
+            include_hidden: When True, surface hidden documents. Admin/Ask
+                document-content passes True to match admin search.
 
         Returns:
             List of sections from the documents specified.

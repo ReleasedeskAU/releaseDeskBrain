@@ -48,10 +48,11 @@ def test_catalog_document_row_includes_connector_source() -> None:
         key="C1__1.0",
         semantic_id="Unknown in #social: hi",
         link=None,
-        extras={"source": "slack", "author": None},
+        extras={"source": "slack", "author": None, "document_id": "slack-thread-1"},
     )
     assert row["source"] == "slack"
     assert row["author"] is None
+    assert row["document_id"] == "slack-thread-1"
 
 
 def test_catalog_document_row_falls_back_to_semantic_prefix() -> None:

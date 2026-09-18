@@ -34,6 +34,13 @@ from onyx.db.search_settings import get_current_search_settings
 from onyx.db.tag import find_tags
 from onyx.document_index.factory import get_default_document_index
 from onyx.document_index.interfaces_new import DocumentIndex
+from onyx.server.query_and_chat.document_content import (
+    DocumentContentError,
+    DocumentContentRequest,
+    build_document_content_response,
+    parse_content_document_id,
+    retrieve_document_content_chunks,
+)
 from onyx.server.query_and_chat.models import (
     AdminSearchRequest,
     AdminSearchResponse,
@@ -253,6 +260,48 @@ def document_list(
         )
     except DocumentCountError:
         raise HTTPException(status_code=400, detail="Invalid catalog request") from None
+
+
+@admin_router.post("/document-content", dependencies=[Depends(require_vector_db)])
+def document_content(
+    body: DocumentContentRequest,
+    user: User = Depends(require_permission(Permission.FULL_ADMIN_PANEL_ACCESS)),
+    db_session: Session = Depends(get_session),
+) -> dict[str, object]:
+    """Indexed document body for one document_id. ACL miss is found=false.
+
+    Uses OpenSearch id_based_retrieval with the same tenant and ACL filters as
+    admin search. Does not log body text.
+    """
+    try:
+        document_id = parse_content_document_id(body.document_id)
+        source = parse_count_source(body.source)
+    except (DocumentCountError, DocumentContentError):
+        raise HTTPException(status_code=400, detail="Invalid catalog request") from None
+
+    tenant_id = get_current_tenant_id()
+    user_acl_filters = build_access_filters_for_user(user, db_session)
+    final_filters = IndexFilters(
+        source_type=[source] if source is not None else None,
+        document_set=None,
+        created_at_range=None,
+        updated_at_range=None,
+        tags=None,
+        access_control_list=user_acl_filters,
+        tenant_id=tenant_id,
+    )
+    search_settings = get_current_search_settings(db_session)
+    document_index = get_default_document_index(search_settings, None, db_session)
+    chunks = retrieve_document_content_chunks(
+        document_id=document_id,
+        document_index=document_index,
+        filters=final_filters,
+    )
+    return build_document_content_response(
+        document_id=document_id,
+        source=source.value if source else "all",
+        chunks=chunks,
+    )
 
 
 def retrieve_admin_search_chunks(

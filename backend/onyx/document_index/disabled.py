@@ -64,6 +64,7 @@ class DisabledDocumentIndex(DocumentIndex):
         chunk_requests: list[DocumentSectionRequest],  # noqa: ARG002
         filters: IndexFilters,  # noqa: ARG002
         batch_retrieval: bool = False,  # noqa: ARG002
+        include_hidden: bool = False,  # noqa: ARG002
     ) -> list[InferenceChunk]:
         raise RuntimeError(VECTOR_DB_DISABLED_ERROR)
 

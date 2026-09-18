@@ -866,6 +866,7 @@ class VespaDocumentIndex(DocumentIndex):
         chunk_requests: list[DocumentSectionRequest],
         filters: IndexFilters,
         batch_retrieval: bool = False,
+        include_hidden: bool = False,  # noqa: ARG002
     ) -> list[InferenceChunk]:
         sanitized_chunk_requests = [
             VespaChunkRequest(
@@ -1310,9 +1311,13 @@ class VespaIndexPair(DocumentIndex):
         chunk_requests: list[DocumentSectionRequest],
         filters: IndexFilters,
         batch_retrieval: bool = False,
+        include_hidden: bool = False,
     ) -> list[InferenceChunk]:
         return self._primary.id_based_retrieval(
-            chunk_requests, filters, batch_retrieval
+            chunk_requests,
+            filters,
+            batch_retrieval,
+            include_hidden=include_hidden,
         )
 
     def hybrid_retrieval(

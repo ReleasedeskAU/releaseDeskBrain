@@ -743,7 +743,7 @@ class OpenSearchDocumentIndex(DocumentIndex):
         # TODO(andrei): Remove this from the new interface at some point; we
         # should not be exposing this.
         batch_retrieval: bool = False,  # noqa: ARG002
-        # TODO(andrei): Add a param for whether to retrieve hidden docs.
+        include_hidden: bool = False,
     ) -> list[InferenceChunk]:
         """
         TODO(andrei): Consider implementing this method to retrieve on document
@@ -767,7 +767,7 @@ class OpenSearchDocumentIndex(DocumentIndex):
                 # production, so we deliberately conform to the existing logic
                 # in order to not unknowningly introduce a possible bug.
                 index_filters=filters,
-                include_hidden=False,
+                include_hidden=include_hidden,
                 max_chunk_size=chunk_request.max_chunk_size,
                 min_chunk_index=chunk_request.min_chunk_ind,
                 max_chunk_index=chunk_request.max_chunk_ind,
@@ -1097,9 +1097,13 @@ class OpenSearchIndexPair(DocumentIndex):
         chunk_requests: list[DocumentSectionRequest],
         filters: IndexFilters,
         batch_retrieval: bool = False,
+        include_hidden: bool = False,
     ) -> list[InferenceChunk]:
         return self._primary.id_based_retrieval(
-            chunk_requests, filters, batch_retrieval
+            chunk_requests,
+            filters,
+            batch_retrieval,
+            include_hidden=include_hidden,
         )
 
     def hybrid_retrieval(
