@@ -31,6 +31,24 @@ class IndexingMemoryDefaultsTest(unittest.TestCase):
         self.assertIn("INDEX_BATCH_SIZE=4", text)
         self.assertIn("CELERY_WORKER_DOCPROCESSING_CONCURRENCY=2", text)
         self.assertNotIn("BACKGROUND_MEM_LIMIT=2g", text)
+        self.assertIn("RERANKER_MEM_LIMIT=3g", text)
+        self.assertIn("RERANKER_CPU_LIMIT=1.0", text)
+
+    def test_reranker_is_internal_tei_with_3g_cap(self) -> None:
+        """CPU TEI reranker: pinned image, 3g cap, no host port, no api depends_on."""
+        text = COMPOSE.read_text(encoding="utf-8")
+        self.assertIn(
+            "image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8.2",
+            text,
+        )
+        self.assertIn("BAAI/bge-reranker-base", text)
+        self.assertIn("RERANKER_MEM_LIMIT:-3g", text)
+        self.assertIn("RERANKER_CPU_LIMIT:-1.0", text)
+        self.assertIn("reranker_model_cache:/data", text)
+        self.assertNotRegex(text, r"reranker:[\s\S]*?ports:")
+        self.assertNotIn("depends_on:\n      reranker", text)
+        api_block = text.split("  api_server:", 1)[1].split("\n  background:", 1)[0]
+        self.assertNotIn("reranker", api_block)
 
 
 if __name__ == "__main__":

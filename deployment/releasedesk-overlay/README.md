@@ -58,6 +58,34 @@ docker compose \
   up -d --wait
 ```
 
+### Optional CPU reranker (TEI)
+
+Hugging Face Text Embeddings Inference serves `BAAI/bge-reranker-base` as
+`http://reranker:80` on the compose network. **No host port.** Query text
+and candidate passages stay on this VM; weights download from Hugging Face
+Hub on first start into volume `reranker_model_cache` (~1 GB plus the TEI
+CPU image). Cgroup cap is **3g / 1 CPU** (2g OOMs on ONNX load). Ask/search
+is **not** pointed at it (that would recreate `api_server`).
+
+Do **not** start `inference_model_server` for this. Pull then start **only**
+`reranker`:
+
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.resources.yml \
+  -f ../releasedesk-overlay/docker-compose.releasedesk.yml \
+  pull reranker
+
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.resources.yml \
+  -f ../releasedesk-overlay/docker-compose.releasedesk.yml \
+  up -d --no-deps --wait --wait-timeout 600 reranker
+```
+
+Do not `build reranker` (pulled image). Do not unscoped `up --force-recreate`.
+
 Equivalent without compose (same Dockerfile target):
 
 ```bash

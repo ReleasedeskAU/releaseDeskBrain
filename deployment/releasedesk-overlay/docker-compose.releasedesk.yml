@@ -23,6 +23,14 @@
 #   - Makes model-server depends_on optional
 #   - Caps RAM for D4as_v5 / D4s_v5 (16 GB). Host OS (Ubuntu 24.04) does not
 #     change these limits. In-compose nginx is not host nginx.
+#   - Adds an optional CPU TEI reranker (no host port). Start it alone:
+#       docker compose -f docker-compose.yml -f docker-compose.resources.yml \
+#         -f ../releasedesk-overlay/docker-compose.releasedesk.yml \
+#         pull reranker
+#       docker compose -f docker-compose.yml -f docker-compose.resources.yml \
+#         -f ../releasedesk-overlay/docker-compose.releasedesk.yml \
+#         up -d --no-deps --wait --wait-timeout 600 reranker
+#     Do not unscoped `up --force-recreate`. Do not `build reranker` (pulled image).
 
 name: onyx
 
@@ -125,3 +133,36 @@ services:
         limits:
           cpus: "1.5"
           memory: 2g
+
+  # Hugging Face TEI (bge-reranker-base). Internal only: http://reranker:80
+  # Query text and candidate passages stay on this VM. Weights download from
+  # Hugging Face Hub on first start into reranker_model_cache. Not wired to
+  # api_server env — that would recreate api_server. Do not put this on
+  # profiles: [local-models] (that profile is empty on this VM).
+  reranker:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8.2
+    restart: unless-stopped
+    command: --model-id BAAI/bge-reranker-base --port 80
+    volumes:
+      - reranker_model_cache:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "6"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:80/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 600s
+    deploy:
+      resources:
+        limits:
+          cpus: ${RERANKER_CPU_LIMIT:-1.0}
+          # 2g OOMs while loading bge-reranker-base ONNX (exit 137). 3g still
+          # fits D4as_v5 available RAM without changing other service limits.
+          memory: ${RERANKER_MEM_LIMIT:-3g}
+
+volumes:
+  reranker_model_cache:
