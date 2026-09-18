@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed
+
+- Slack thread replies were dropped on a cold reindex when
+  ``conversations.replies(parent)`` returned the parent only (or the parent
+  fetch failed). History lookup now uses the row's own ``ts`` first, merges a
+  parent refetch into that payload, and still skips minting ``channel__reply_ts``
+  when the parent thread cannot be loaded.
+
 ### Added
 
 - Slack Ask field schema (POC): Slack declares optional tags ``channel`` and
