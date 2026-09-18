@@ -58,8 +58,8 @@ from onyx.connectors.slack.source_operations import (
     SlackChannelVariant,
     SlackSourceOperations,
 )
+from onyx.connectors.slack.fields import FIELD_SCHEMA
 from onyx.connectors.slack.utils import (
-    FIELD_SCHEMA,
     FetchUserInfo,
     SlackTextCleaner,
     expert_info_from_slack_id,

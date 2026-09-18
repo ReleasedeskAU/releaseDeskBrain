@@ -4,6 +4,21 @@
 
 ### Added
 
+- Platform PII tag blocklist now includes ``sender_email``. Existing
+  ``assignee_email`` / ``reporter_email`` blocks are unchanged. A connector
+  schema that lists the key fails at load.
+
+- Teams Ask field schema: Teams declares optional tags ``channel`` and
+  ``author`` (display name, never email) in ``FIELD_SCHEMA``, same keys as
+  Slack. ``POST /admin/document-fields`` with ``source=teams`` returns that
+  schema intersected with the connector instance ``indexed_field_selection``
+  (NULL = both tags, ``[]`` = none). Other unmigrated sources still use
+  ``ALLOWED_TAG_KEYS``. Unchecking a tag does not purge stored tags or force
+  a re-index. No onboarding checkbox UI. Ask tool enum and system prompt
+  unchanged.
+
+### Added
+
 - Ask can fetch one document's indexed body via ``POST /admin/document-content``
   (OpenSearch ``document_id``, ACL + tenant filters matching admin search,
   16-chunk / 24k-char cap, ``truncated`` flag). ACL miss returns ``found:

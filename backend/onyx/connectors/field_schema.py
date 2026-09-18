@@ -1,8 +1,7 @@
 """Declared indexed-tag schema for connectors.
 
 Identity (id, title, link) and Content (body text) are always-on Document
-fields — not customer checkboxes. Optional tags (Slack channel/author) are
-declared here.
+fields — not customer checkboxes. Optional tags are declared per connector.
 
 PII_TAG_KEYS is platform-owned. A connector schema that lists a blocked key
 fails at load, not only at query time. Selection cannot add a blocked key.
@@ -18,7 +17,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 # Platform deny-list. Connectors cannot declare or select these.
-PII_TAG_KEYS = frozenset({"assignee_email", "reporter_email"})
+PII_TAG_KEYS = frozenset({"assignee_email", "reporter_email", "sender_email"})
 
 
 class FieldCategory(str, Enum):
@@ -77,6 +76,11 @@ def validate_field_schema(schema: tuple[FieldDecl, ...]) -> tuple[FieldDecl, ...
 def default_selected_keys(schema: tuple[FieldDecl, ...]) -> frozenset[str]:
     """Keys that are selected when the instance selection is unset."""
     return frozenset(item.key for item in schema if item.default_selected)
+
+
+def contains_match_keys(schema: tuple[FieldDecl, ...]) -> frozenset[str]:
+    """Keys this schema publishes as contains-match, not exact."""
+    return frozenset(item.key for item in schema if item.match == "contains")
 
 
 def sanitize_indexed_field_selection(

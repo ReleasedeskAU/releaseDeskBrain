@@ -12,8 +12,13 @@ from sqlalchemy import distinct, func, select
 from sqlalchemy.orm import Session
 
 from onyx.configs.constants import DocumentSource
-from onyx.connectors.field_schema import PII_TAG_KEYS, effective_selection
-from onyx.connectors.slack.utils import FIELD_SCHEMA as SLACK_FIELD_SCHEMA
+from onyx.connectors.field_schema import (
+    FieldDecl,
+    PII_TAG_KEYS,
+    contains_match_keys,
+    effective_selection,
+)
+from onyx.connectors.indexed_schemas import schema_for_source
 from onyx.db.document_date_filter import (
     DATE_TAG_KEYS,
     RESOLVED_STATUS_CATEGORY,
@@ -140,37 +145,59 @@ def queryable_fields_for_source(
     source: DocumentSource | None,
     db_session: Session | None = None,
 ) -> dict[str, object]:
-    """Per-source published fields. Slack uses declared schema + instance selection.
+    """Per-source published fields. Migrated sources use declared schema + selection.
 
-    Other sources still use ALLOWED_TAG_KEYS. Slack unset selection is channel
-    and author (today's tags). Empty selection is no optional tags.
+    Unmigrated sources still use ALLOWED_TAG_KEYS. Unset selection is schema
+    defaults (today's tags). Empty selection is no optional tags.
     """
-    if source != DocumentSource.SLACK:
+    schema = schema_for_source(source)
+    if source is None or schema is None:
         return queryable_fields()
-    keys = slack_queryable_keys(db_session)
-    payload = _queryable_payload(keys)
-    payload["note"] = (
-        "Slack optional tags from this tenant's field selection. "
-        "Unset inherits channel and author. Empty list is none. "
-        "Unchecking does not purge stored tags or force a re-index."
-    )
+    keys = declared_queryable_keys(source, schema, db_session)
+    payload = _queryable_payload(keys, contains_keys=contains_match_keys(schema))
+    # Slack's published note is unchanged from the verified schema POC.
+    if source == DocumentSource.SLACK:
+        payload["note"] = (
+            "Slack optional tags from this tenant's field selection. "
+            "Unset inherits channel and author. Empty list is none. "
+            "Unchecking does not purge stored tags or force a re-index."
+        )
+    else:
+        payload["note"] = (
+            "Optional tags from this tenant's field selection. "
+            "Unset inherits schema defaults. Empty list is none. "
+            "Unchecking does not purge stored tags or force a re-index."
+        )
     return payload
+
+
+def declared_queryable_keys(
+    source: DocumentSource,
+    schema: tuple[FieldDecl, ...],
+    db_session: Session | None,
+) -> frozenset[str]:
+    """Union of effective selections for one declared-schema source.
+
+    No rows / unset → schema defaults.
+    """
+    if db_session is None:
+        return effective_selection(None, schema)
+    stmt = select(Connector.indexed_field_selection).where(Connector.source == source)
+    rows = list(db_session.execute(stmt).scalars().all())
+    if not rows:
+        return effective_selection(None, schema)
+    selected: set[str] = set()
+    for stored in rows:
+        selected |= set(effective_selection(stored, schema))
+    return frozenset(selected)
 
 
 def slack_queryable_keys(db_session: Session | None) -> frozenset[str]:
     """Union of effective Slack selections. No rows / unset → schema defaults."""
-    if db_session is None:
-        return effective_selection(None, SLACK_FIELD_SCHEMA)
-    stmt = select(Connector.indexed_field_selection).where(
-        Connector.source == DocumentSource.SLACK
-    )
-    rows = list(db_session.execute(stmt).scalars().all())
-    if not rows:
-        return effective_selection(None, SLACK_FIELD_SCHEMA)
-    selected: set[str] = set()
-    for stored in rows:
-        selected |= set(effective_selection(stored, SLACK_FIELD_SCHEMA))
-    return frozenset(selected)
+    schema = schema_for_source(DocumentSource.SLACK)
+    if schema is None:
+        return frozenset()
+    return declared_queryable_keys(DocumentSource.SLACK, schema, db_session)
 
 
 def require_source_filter_field(
@@ -189,16 +216,22 @@ def _assert_field_allowed_on_source(
     source: DocumentSource | None,
     db_session: Session | None,
 ) -> None:
-    if source != DocumentSource.SLACK:
+    schema = schema_for_source(source)
+    if source is None or schema is None:
         return
-    if key not in slack_queryable_keys(db_session):
+    if key not in declared_queryable_keys(source, schema, db_session):
         raise DocumentCountError("Unknown filter field")
 
 
-def _queryable_payload(keys: frozenset[str]) -> dict[str, object]:
+def _queryable_payload(
+    keys: frozenset[str],
+    *,
+    contains_keys: frozenset[str] | None = None,
+) -> dict[str, object]:
+    match_contains = contains_keys if contains_keys is not None else CONTAINS_TAG_KEYS
     fields = sorted(keys)
-    contains = sorted(keys & CONTAINS_TAG_KEYS)
-    exact = sorted(keys - CONTAINS_TAG_KEYS)
+    contains = sorted(keys & match_contains)
+    exact = sorted(keys - match_contains)
     return {
         "fields": fields,
         "contains_match": contains,

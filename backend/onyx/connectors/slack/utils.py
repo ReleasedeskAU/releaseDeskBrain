@@ -2,11 +2,6 @@ import re
 from collections.abc import Callable
 from functools import lru_cache
 
-from onyx.connectors.field_schema import (
-    FieldCategory,
-    FieldDecl,
-    validate_field_schema,
-)
 from onyx.connectors.models import BasicExpertInfo
 from onyx.connectors.slack.models import MessageType
 from onyx.connectors.slack.source_operations import (
@@ -134,26 +129,6 @@ def slack_author_display_name(info: BasicExpertInfo | None) -> str | None:
     if not name or name.casefold() == "unknown":
         return None
     return name[:_AUTHOR_TAG_MAX_CHARS]
-
-
-# Optional Slack tags only. Identity (id/title/link) and message text are
-# always-on Document fields, not this list. Import fails if a PII key is added.
-FIELD_SCHEMA = validate_field_schema(
-    (
-        FieldDecl(
-            "channel",
-            FieldCategory.RELATIONSHIPS,
-            "Channel",
-            match="exact",
-        ),
-        FieldDecl(
-            "author",
-            FieldCategory.OWNERSHIP,
-            "Author",
-            match="contains",
-        ),
-    )
-)
 
 
 def slack_document_metadata(

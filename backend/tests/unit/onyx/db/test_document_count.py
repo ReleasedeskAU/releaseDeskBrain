@@ -160,13 +160,21 @@ def test_slack_queryable_fields_unset_match_today_slack_tags() -> None:
     assert "assignee" in global_fields
     slack = queryable_fields_for_source(DocumentSource.SLACK, None)
     assert slack["fields"] == ["author", "channel"]
+    assert slack["contains_match"] == ["author"]
+    assert "Unset inherits channel and author" in str(slack["note"])
     via_catalog = list_queryable_fields(DocumentSource.SLACK, None)
     assert via_catalog["fields"] == ["author", "channel"]
+    teams = queryable_fields_for_source(DocumentSource.TEAMS, None)
+    assert teams["fields"] == ["author", "channel"]
+    assert teams["contains_match"] == ["author"]
     jira = queryable_fields_for_source(DocumentSource.JIRA, None)
     assert jira["fields"] == global_fields
     assert require_source_filter_field("channel", DocumentSource.SLACK, None) == "channel"
+    assert require_source_filter_field("channel", DocumentSource.TEAMS, None) == "channel"
     with pytest.raises(DocumentCountError):
         require_source_filter_field("assignee", DocumentSource.SLACK, None)
+    with pytest.raises(DocumentCountError):
+        require_source_filter_field("assignee", DocumentSource.TEAMS, None)
     assert require_source_filter_field("assignee", DocumentSource.JIRA, None) == "assignee"
 
 

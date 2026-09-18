@@ -40,6 +40,7 @@ from onyx.connectors.models import (
     SlimDocument,
     TextSection,
 )
+from onyx.connectors.teams.fields import FIELD_SCHEMA
 from onyx.connectors.teams.models import Message
 from onyx.connectors.teams.utils import (
     execute_query_with_retry,
@@ -71,6 +72,7 @@ class TeamsConnector(
     SlimConnectorWithPermSync,
 ):
     MAX_WORKERS = 10
+    field_schema = FIELD_SCHEMA
 
     def __init__(
         self,
