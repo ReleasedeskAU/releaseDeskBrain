@@ -6,8 +6,9 @@
 
 - Admin hybrid search can rerank unique hits through the self-hosted TEI
   service (``ENABLE_RERANK=false`` by default, ``RERANKER_URL=http://reranker:80``).
-  After document-id dedupe, up to 30 passages are sent to ``/rerank`` with a
-  3s timeout; the top 10 come back. Failures log a warning without query or
+  After document-id dedupe, up to 10 passages (capped at 1512 chars so TEI
+  ``max_input_length=512`` does not 413) are sent to ``/rerank`` with a
+  3s timeout; the top 10 come back reordered. Failures log a warning without query or
   passage text and return the unre-ranked hybrid list. Keyword / Connectors
   search is unchanged. Ask TypeScript is unchanged.
 

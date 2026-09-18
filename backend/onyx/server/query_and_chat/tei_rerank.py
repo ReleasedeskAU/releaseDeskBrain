@@ -18,7 +18,9 @@ from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
 
-_MAX_PASSAGE_CHARS = 2000
+# TEI bge-reranker-base: max_input_length=512 tokens, auto_truncate=false.
+# 2000-char texts 413; 1512 'x' chars is the measured per-text 200 ceiling.
+_MAX_PASSAGE_CHARS = 1512
 
 
 def should_rerank_admin_search(retrieval: str, query: str) -> bool:

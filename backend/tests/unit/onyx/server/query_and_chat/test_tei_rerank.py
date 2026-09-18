@@ -46,9 +46,9 @@ def test_flag_off_does_not_call_tei() -> None:
     opener.assert_not_called()
 
 
-def test_success_keeps_top_ten_in_score_order() -> None:
-    docs = [_doc(f"d{i}", f"passage {i}") for i in range(12)]
-    payload = [{"index": i, "score": float(i)} for i in range(12)]
+def test_success_keeps_all_ten_in_score_order() -> None:
+    docs = [_doc(f"d{i}", f"passage {i}") for i in range(10)]
+    payload = [{"index": i, "score": float(i)} for i in range(10)]
     response = MagicMock()
     response.status = 200
     response.read.return_value = json.dumps(payload).encode()
@@ -62,7 +62,7 @@ def test_success_keeps_top_ten_in_score_order() -> None:
     ):
         out = maybe_rerank_hybrid_documents("when is the release", docs)
     opener.assert_called_once()
-    assert [doc.document_id for doc in out] == [f"d{i}" for i in range(11, 1, -1)]
+    assert [doc.document_id for doc in out] == [f"d{i}" for i in range(9, -1, -1)]
     assert len(out) == 10
 
 
@@ -98,3 +98,25 @@ def test_bad_json_returns_original_list() -> None:
         patch("onyx.server.query_and_chat.tei_rerank.urlopen", return_value=response),
     ):
         assert maybe_rerank_hybrid_documents("q", docs) is docs
+
+
+def test_overlong_passage_is_trimmed_before_tei() -> None:
+    docs = [_doc("a", "x" * 2000)]
+    response = MagicMock()
+    response.status = 200
+    response.read.return_value = json.dumps(
+        [{"index": 0, "score": 0.9}]
+    ).encode()
+    response.__enter__.return_value = response
+    response.__exit__.return_value = False
+    with (
+        patch("onyx.server.query_and_chat.tei_rerank.ENABLE_RERANK", True),
+        patch(
+            "onyx.server.query_and_chat.tei_rerank.urlopen", return_value=response
+        ) as opener,
+    ):
+        out = maybe_rerank_hybrid_documents("when is the release", docs)
+    assert out == docs
+    opener.assert_called_once()
+    posted = json.loads(opener.call_args.args[0].data.decode())
+    assert posted["texts"] == ["x" * 1512]
