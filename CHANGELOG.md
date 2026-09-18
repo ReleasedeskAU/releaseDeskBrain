@@ -4,6 +4,13 @@
 
 ### Added
 
+- Admin hybrid search can rerank unique hits through the self-hosted TEI
+  service (``ENABLE_RERANK=false`` by default, ``RERANKER_URL=http://reranker:80``).
+  After document-id dedupe, up to 30 passages are sent to ``/rerank`` with a
+  3s timeout; the top 10 come back. Failures log a warning without query or
+  passage text and return the unre-ranked hybrid list. Keyword / Connectors
+  search is unchanged. Ask TypeScript is unchanged.
+
 - Ask can fetch one document's indexed body via ``POST /admin/document-content``
   (OpenSearch ``document_id``, ACL + tenant filters matching admin search,
   16-chunk / 24k-char cap, ``truncated`` flag). ACL miss returns ``found:
