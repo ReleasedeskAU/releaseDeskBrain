@@ -47,6 +47,10 @@ from onyx.server.query_and_chat.models import (
     SourceTag,
     TagResponse,
 )
+from onyx.server.query_and_chat.tei_rerank import (
+    maybe_rerank_hybrid_documents,
+    should_rerank_admin_search,
+)
 from onyx.server.utils_vector_db import require_vector_db
 from onyx.utils.logger import setup_logger
 from shared_configs.contextvars import get_current_tenant_id
@@ -380,6 +384,11 @@ def admin_search(
         if document.document_id not in seen_documents:
             deduplicated_documents.append(document)
             seen_documents.add(document.document_id)
+    # Unique docs, not raw chunks — one Slack thread would otherwise fill the TEI batch.
+    if should_rerank_admin_search(question.retrieval, query):
+        deduplicated_documents = maybe_rerank_hybrid_documents(
+            query, deduplicated_documents
+        )
     return AdminSearchResponse(documents=deduplicated_documents)
 
 

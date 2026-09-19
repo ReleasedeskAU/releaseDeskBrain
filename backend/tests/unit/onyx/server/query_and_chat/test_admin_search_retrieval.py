@@ -6,6 +6,7 @@ from onyx.context.search.enums import QueryType
 from onyx.context.search.models import BaseFilters, IndexFilters
 from onyx.server.query_and_chat.models import AdminSearchRequest
 from onyx.server.query_and_chat.query_backend import retrieve_admin_search_chunks
+from onyx.server.query_and_chat.tei_rerank import should_rerank_admin_search
 
 
 def test_admin_search_request_defaults_to_keyword() -> None:
@@ -76,3 +77,13 @@ def test_hybrid_path_embeds_and_passes_include_hidden_true() -> None:
     assert kwargs["query_embedding"] == [0.1, 0.2]
     document_index.keyword_retrieval.assert_not_called()
     document_index.random_retrieval.assert_not_called()
+
+
+def test_keyword_retrieval_does_not_qualify_for_rerank() -> None:
+    with patch("onyx.server.query_and_chat.tei_rerank.ENABLE_RERANK", True):
+        assert should_rerank_admin_search("keyword", "release") is False
+
+
+def test_empty_query_does_not_qualify_for_rerank() -> None:
+    with patch("onyx.server.query_and_chat.tei_rerank.ENABLE_RERANK", True):
+        assert should_rerank_admin_search("hybrid", "") is False

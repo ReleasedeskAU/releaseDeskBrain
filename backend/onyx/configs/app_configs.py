@@ -1605,6 +1605,17 @@ MAX_TOKENS_FOR_FULL_INCLUSION = 4096
 # we'll just use the default value, but also have it be configurable by env var.
 RECENCY_BIAS_MULTIPLIER = float(os.environ.get("RECENCY_BIAS_MULTIPLIER") or 1.0)
 
+# Hugging Face TEI on the compose network (admin hybrid search only).
+# Off by default. Keyword / Connectors search never calls it.
+ENABLE_RERANK = os.environ.get("ENABLE_RERANK", "").lower() == "true"
+RERANKER_URL = (os.environ.get("RERANKER_URL") or "http://reranker:80").rstrip("/")
+RERANK_TIMEOUT_SECONDS = float(os.environ.get("RERANK_TIMEOUT_SECONDS") or 3)
+# Live timing on D4as_v5 at 2 CPU / 5g: 10 candidates ~1.3s idle and under a
+# Jira/Slack sync; 20 is ~2.6–2.8s; 30 is ~3.9–4.5s. Keep 10 so both stay
+# under ~2s. RERANK_KEEP matches so every sent hit can come back reordered.
+RERANK_CANDIDATES = 10
+RERANK_KEEP = 10
+
 # Should match the rerank-count value set in
 # backend/onyx/document_index/vespa/app_config/schemas/danswer_chunk.sd.jinja.
 RERANK_COUNT = int(os.environ.get("RERANK_COUNT") or 1000)
