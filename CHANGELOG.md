@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed
+
+- Overlay nginx re-resolves ``api_server`` through Docker DNS instead of
+  caching the container IP at start. Recreating ``api_server`` no longer
+  502s on host ``/health`` until a manual ``nginx -s reload``. Operator
+  path is ``releasedesk-overlay/recreate-api-server.sh`` (BN-378).
+
 ### Added
 
 - Admin hybrid search can rerank unique hits through the self-hosted TEI

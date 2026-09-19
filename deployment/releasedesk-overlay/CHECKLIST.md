@@ -77,7 +77,9 @@ docker compose \
 5. **Run first-time setup once**
    - `../releasedesk-overlay/setup-onyx.sh` with `ONYX_SERVER_URL`, admin email/password, `OPENAI_API_KEY`.
    - Store the printed PAT in ReleaseDesk Everywhere secrets. It is shown once.
-   - Set `ENABLE_PUBLIC_DOCS=false` and recreate `api_server` (and nginx if needed).
+   - Set `ENABLE_PUBLIC_DOCS=false` and recreate `api_server` with
+     `../releasedesk-overlay/recreate-api-server.sh` (one command). Nginx
+     re-resolves the new IP; do not rely on a separate `nginx -s reload`.
 
 6. **Prove StaffLess AI works on its own**
    - `Authorization: Bearer <pat>` against `POST /api/chat/create-chat-session` and `POST /api/chat/send-chat-message`.
