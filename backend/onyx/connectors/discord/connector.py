@@ -12,6 +12,7 @@ from discord.message import Message as DiscordMessage
 
 from onyx.configs.app_configs import INDEX_BATCH_SIZE
 from onyx.configs.constants import DocumentSource
+from onyx.connectors.discord.metadata import discord_document_metadata
 from onyx.connectors.exceptions import CredentialInvalidError
 from onyx.connectors.interfaces import (
     GenerateDocumentsOutput,
@@ -45,14 +46,14 @@ def _convert_message_to_document(
         calls to fetch the thread history if there is one
     """
 
-    metadata: dict[str, str | list[str]] = {}
     semantic_substring = ""
+    channel_name: str | None = None
+    thread_name: str | None = None
 
     # Only messages from TextChannels will make it here but we have to check for it anyways
     if isinstance(message.channel, TextChannel) and (
         channel_name := message.channel.name
     ):
-        metadata["Channel"] = channel_name
         semantic_substring += f" in Channel: #{channel_name}"
 
     # Single messages dont have a title
@@ -62,12 +63,12 @@ def _convert_message_to_document(
     if isinstance(message.channel, Thread):
         # Threads do have a title
         title = message.channel.name
-
-        # If its a thread, update the metadata, title, and semantic_substring
-        metadata["Thread"] = title
+        thread_name = title
 
         # Add more detail to the semantic identifier if available
         semantic_substring += f" in Thread: {title}"
+
+    metadata = discord_document_metadata(channel_name, thread_name)
 
     snippet: str = (
         message.content[:_SNIPPET_LENGTH].rstrip() + "..."

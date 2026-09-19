@@ -27,6 +27,11 @@
 
 ### Fixed
 
+- Discord metadata keys are now lowercase (``channel``, ``thread``) so they
+  match catalog/Ask filters. Existing Discord documents keep the old
+  ``Channel`` / ``Thread`` tags until a from-beginning reindex. No Discord
+  field schema in this change.
+
 - Folded comments on Confluence pages, Jira issues, Linear issues, and ClickUp
   tasks now prefix each comment with the speaker display name (``Name: text``,
   ``Unknown`` when unresolved) via a shared ``format_attributed_message`` helper.
