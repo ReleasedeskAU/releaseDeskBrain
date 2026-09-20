@@ -31,6 +31,13 @@
   ``assignee_email`` / ``reporter_email`` blocks are unchanged. A connector
   schema that lists the key fails at load.
 
+- Jira Ask field schema: Jira declares the current queryable ticket tags
+  (key, status, status_category, people, dates, parent, links, labels —
+  never emails or ``custom_fields``) in ``FIELD_SCHEMA``. Unset selection
+  inherits that full list so existing tenants who do not open settings keep
+  today's catalog. Empty list is none. Unchecking does not purge stored
+  tags or force a re-index. PII keys still fail at declaration time (BN-378).
+
 - Teams Ask field schema: Teams declares optional tags ``channel`` and
   ``author`` (display name, never email) in ``FIELD_SCHEMA``, same keys as
   Slack. ``POST /admin/document-fields`` with ``source=teams`` returns that

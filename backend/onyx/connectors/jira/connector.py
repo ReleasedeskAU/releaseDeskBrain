@@ -38,6 +38,7 @@ from onyx.connectors.interfaces import (
     SlimConnectorWithPermSync,
 )
 from onyx.connectors.jira.access import get_project_permissions
+from onyx.connectors.jira.fields import FIELD_SCHEMA
 from onyx.connectors.jira.utils import (
     JIRA_CLOUD_API_VERSION,
     CustomFieldExtractor,
@@ -837,6 +838,8 @@ class JiraConnector(
     SlimConnector,
     SlimConnectorWithPermSync,
 ):
+    field_schema = FIELD_SCHEMA
+
     def __init__(
         self,
         jira_base_url: str,
