@@ -1,4 +1,4 @@
-"""Declared field schema — PII fails at load; Slack/Teams/Jira/GitHub optional tags."""
+"""Declared field schema — PII fails at load; Slack/Teams/Jira/GitHub/GitLab optional tags."""
 
 from onyx.configs.constants import DocumentSource
 from onyx.connectors.field_schema import (
@@ -13,6 +13,7 @@ from onyx.connectors.field_schema import (
     validate_field_schema,
 )
 from onyx.connectors.github.fields import FIELD_SCHEMA as GITHUB_SCHEMA
+from onyx.connectors.gitlab.fields import FIELD_SCHEMA as GITLAB_SCHEMA
 from onyx.connectors.indexed_schemas import FIELD_SCHEMAS, schema_for_source
 from onyx.connectors.jira.fields import FIELD_SCHEMA as JIRA_SCHEMA
 from onyx.connectors.slack.fields import FIELD_SCHEMA as SLACK_SCHEMA
@@ -137,15 +138,65 @@ def test_github_schema_matches_today_catalog_without_pii() -> None:
     assert effective_selection([], GITHUB_SCHEMA) == frozenset()
 
 
-def test_slack_teams_jira_and_github_are_migrated() -> None:
+GITLAB_OPTIONAL_KEYS = {
+    "key",
+    "project",
+    "repo",
+    "object_type",
+    "state",
+    "status",
+    "merged",
+    "assignee",
+    "reporter",
+    "author",
+    "created",
+    "updated",
+    "duedate",
+    "labels",
+}
+
+
+def test_gitlab_schema_matches_today_catalog_without_pii() -> None:
+    keys = _keys(GITLAB_SCHEMA)
+    assert keys == GITLAB_OPTIONAL_KEYS
+    assert keys.isdisjoint(PII_TAG_KEYS)
+    assert "assignee_email" not in keys
+    assert "reporter_email" not in keys
+    assert "author_email" not in keys
+    assert "user" not in keys
+    assert "assignees" not in keys
+    assert "merged_by" not in keys
+    assert "closed_by" not in keys
+    assert "type" not in keys
+    assert "sha" not in keys
+    assert "link" not in keys
+    assert "visibility" not in keys
+    assert "channel" not in keys
+    assert "num_commits" not in keys
+    assert default_selected_keys(GITLAB_SCHEMA) == frozenset(GITLAB_OPTIONAL_KEYS)
+    assert contains_match_keys(GITLAB_SCHEMA) == frozenset(
+        {"assignee", "reporter", "author", "labels"}
+    )
+    assert {item.key for item in GITLAB_SCHEMA if item.match == "date"} == {
+        "created",
+        "updated",
+        "duedate",
+    }
+    assert effective_selection(None, GITLAB_SCHEMA) == frozenset(GITLAB_OPTIONAL_KEYS)
+    assert effective_selection([], GITLAB_SCHEMA) == frozenset()
+
+
+def test_slack_teams_jira_github_and_gitlab_are_migrated() -> None:
     assert set(FIELD_SCHEMAS) == {
         DocumentSource.SLACK,
         DocumentSource.TEAMS,
         DocumentSource.JIRA,
         DocumentSource.GITHUB,
+        DocumentSource.GITLAB,
     }
     assert schema_for_source(DocumentSource.JIRA) is JIRA_SCHEMA
     assert schema_for_source(DocumentSource.GITHUB) is GITHUB_SCHEMA
+    assert schema_for_source(DocumentSource.GITLAB) is GITLAB_SCHEMA
     assert schema_for_source(DocumentSource.DISCOURSE) is None
     assert schema_for_source(DocumentSource.ZULIP) is None
 

@@ -31,6 +31,18 @@
   ``assignee_email`` / ``reporter_email`` blocks are unchanged. A connector
   schema that lists the key fails at load.
 
+- GitLab Ask field schema: GitLab declares the current queryable tags
+  (``key``, ``project``, ``repo``, ``object_type``, ``state``, ``status``,
+  ``merged``, ``assignee``, ``reporter``, ``author``, ``created``,
+  ``updated``, ``duedate``, ``labels``) in ``FIELD_SCHEMA``. ``repo`` and
+  ``project`` stay separate keys (same path); ``state`` and ``status``
+  stay separate keys (same GitLab state). Unset inherits that list so
+  existing tenants who do not open settings keep today's catalog. Empty
+  list is none. People tags are display names only — never email. Written
+  but unpublished keys (``type``, ``sha``, ``link``, ``visibility``,
+  ``default_branch``, ``path``, ``branch``) stay out. Unchecking does not
+  purge stored tags or force a re-index (BN-378).
+
 - GitHub Ask field schema: GitHub declares the current queryable tags
   (``object_type``, ``repo``, ``state``, ``merged``, ``labels``,
   ``num_commits``, ``num_files_changed``) in ``FIELD_SCHEMA``. Unset

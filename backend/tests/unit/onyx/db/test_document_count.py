@@ -337,3 +337,62 @@ def test_github_unset_row_keeps_today_catalog() -> None:
     assert "user" not in keys
     assert "channel" not in keys
 
+
+def test_gitlab_empty_selection_hides_optional_tags() -> None:
+    from onyx.connectors.gitlab.fields import FIELD_SCHEMA
+    from onyx.db.document_count import declared_queryable_keys
+
+    class _FakeSession:
+        def execute(self, _stmt: object) -> "_FakeSession":
+            return self
+
+        def scalars(self) -> "_FakeSession":
+            return self
+
+        def all(self) -> list[list[str]]:
+            return [[]]
+
+    assert (
+        declared_queryable_keys(DocumentSource.GITLAB, FIELD_SCHEMA, _FakeSession())
+        == frozenset()
+    )
+
+
+def test_gitlab_unset_row_keeps_today_catalog() -> None:
+    from onyx.connectors.gitlab.fields import FIELD_SCHEMA
+    from onyx.db.document_count import declared_queryable_keys
+
+    class _FakeSession:
+        def execute(self, _stmt: object) -> "_FakeSession":
+            return self
+
+        def scalars(self) -> "_FakeSession":
+            return self
+
+        def all(self) -> list[None]:
+            return [None]
+
+    keys = declared_queryable_keys(DocumentSource.GITLAB, FIELD_SCHEMA, _FakeSession())
+    assert keys == frozenset(
+        {
+            "key",
+            "project",
+            "repo",
+            "object_type",
+            "state",
+            "status",
+            "merged",
+            "assignee",
+            "reporter",
+            "author",
+            "created",
+            "updated",
+            "duedate",
+            "labels",
+        }
+    )
+    assert "assignee_email" not in keys
+    assert "type" not in keys
+    assert "channel" not in keys
+    assert "num_commits" not in keys
+

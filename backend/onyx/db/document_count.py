@@ -177,6 +177,15 @@ def queryable_fields_for_source(
             "no people fields). Empty list is none. Unchecking does not "
             "purge stored tags or force a re-index."
         )
+    elif source == DocumentSource.GITLAB:
+        payload["note"] = (
+            "GitLab optional tags from this tenant's field selection. "
+            "Unset inherits today's GitLab catalog (key, project, repo, "
+            "object_type, state, status, merged, assignee, reporter, "
+            "author, created, updated, duedate, labels — display names, "
+            "never email). Empty list is none. Unchecking does not "
+            "purge stored tags or force a re-index."
+        )
     else:
         payload["note"] = (
             "Optional tags from this tenant's field selection. "

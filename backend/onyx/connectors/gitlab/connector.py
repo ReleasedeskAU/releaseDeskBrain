@@ -30,6 +30,7 @@ from onyx.connectors.gitlab.docs import (
     map_overview_to_document,
     map_readme_to_document,
 )
+from onyx.connectors.gitlab.fields import FIELD_SCHEMA
 from onyx.connectors.models import (
     BasicExpertInfo,
     ConnectorMissingCredentialError,
@@ -305,6 +306,8 @@ def _should_exclude(path: str) -> bool:
 
 
 class GitlabConnector(LoadConnector, PollConnector):
+    field_schema = FIELD_SCHEMA
+
     def __init__(
         self,
         project_owner: str,
