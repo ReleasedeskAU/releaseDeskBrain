@@ -1,4 +1,4 @@
-"""Declared field schema — PII fails at load; Slack/Teams declare channel and author."""
+"""Declared field schema — PII fails at load; Slack/Teams/Jira publish optional tags."""
 
 from onyx.configs.constants import DocumentSource
 from onyx.connectors.field_schema import (
@@ -13,6 +13,7 @@ from onyx.connectors.field_schema import (
     validate_field_schema,
 )
 from onyx.connectors.indexed_schemas import FIELD_SCHEMAS, schema_for_source
+from onyx.connectors.jira.fields import FIELD_SCHEMA as JIRA_SCHEMA
 from onyx.connectors.slack.fields import FIELD_SCHEMA as SLACK_SCHEMA
 from onyx.connectors.teams.fields import FIELD_SCHEMA as TEAMS_SCHEMA
 import pytest
@@ -54,9 +55,58 @@ def test_teams_schema_matches_slack_tags() -> None:
     assert effective_selection([], TEAMS_SCHEMA) == frozenset()
 
 
-def test_only_slack_and_teams_are_migrated() -> None:
-    assert set(FIELD_SCHEMAS) == {DocumentSource.SLACK, DocumentSource.TEAMS}
-    assert schema_for_source(DocumentSource.JIRA) is None
+JIRA_OPTIONAL_KEYS = {
+    "key",
+    "project",
+    "project_name",
+    "issuetype",
+    "status",
+    "status_category",
+    "resolution",
+    "status_was",
+    "priority",
+    "assignee",
+    "reporter",
+    "last_updater",
+    "created",
+    "updated",
+    "duedate",
+    "resolution_date",
+    "parent",
+    "issuelink",
+    "issuelink_type",
+    "labels",
+}
+
+
+def test_jira_schema_matches_today_catalog_without_pii() -> None:
+    keys = _keys(JIRA_SCHEMA)
+    assert keys == JIRA_OPTIONAL_KEYS
+    assert keys.isdisjoint(PII_TAG_KEYS)
+    assert "assignee_email" not in keys
+    assert "reporter_email" not in keys
+    assert "custom_fields" not in keys
+    assert default_selected_keys(JIRA_SCHEMA) == frozenset(JIRA_OPTIONAL_KEYS)
+    assert contains_match_keys(JIRA_SCHEMA) == frozenset(
+        {"assignee", "reporter", "last_updater", "labels"}
+    )
+    assert {item.key for item in JIRA_SCHEMA if item.match == "date"} == {
+        "created",
+        "updated",
+        "duedate",
+        "resolution_date",
+    }
+    assert effective_selection(None, JIRA_SCHEMA) == frozenset(JIRA_OPTIONAL_KEYS)
+    assert effective_selection([], JIRA_SCHEMA) == frozenset()
+
+
+def test_slack_teams_and_jira_are_migrated() -> None:
+    assert set(FIELD_SCHEMAS) == {
+        DocumentSource.SLACK,
+        DocumentSource.TEAMS,
+        DocumentSource.JIRA,
+    }
+    assert schema_for_source(DocumentSource.JIRA) is JIRA_SCHEMA
     assert schema_for_source(DocumentSource.DISCOURSE) is None
     assert schema_for_source(DocumentSource.ZULIP) is None
 

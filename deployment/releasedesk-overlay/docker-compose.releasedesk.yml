@@ -9,6 +9,8 @@
 #     build api_server background
 #   docker compose -f docker-compose.yml -f docker-compose.resources.yml \
 #     -f ../releasedesk-overlay/docker-compose.releasedesk.yml up -d --wait
+# Recreate api_server only via ../releasedesk-overlay/recreate-api-server.sh
+# (nginx re-resolves the new IP; raw --no-deps recreate is also safe).
 #
 # Overlay does not set build.context — that path is relative to THIS file
 # (deployment/releasedesk-overlay), which is the wrong tree. Stock foss
