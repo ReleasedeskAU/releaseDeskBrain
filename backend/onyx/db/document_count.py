@@ -169,6 +169,14 @@ def queryable_fields_for_source(
             "Empty list is none. Unchecking does not purge stored tags or "
             "force a re-index."
         )
+    elif source == DocumentSource.GITHUB:
+        payload["note"] = (
+            "GitHub optional tags from this tenant's field selection. "
+            "Unset inherits today's GitHub catalog (object_type, repo, "
+            "state, merged, labels, num_commits, num_files_changed — "
+            "no people fields). Empty list is none. Unchecking does not "
+            "purge stored tags or force a re-index."
+        )
     else:
         payload["note"] = (
             "Optional tags from this tenant's field selection. "

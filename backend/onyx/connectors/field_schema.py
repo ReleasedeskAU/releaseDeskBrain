@@ -17,7 +17,19 @@ from dataclasses import dataclass
 from enum import Enum
 
 # Platform deny-list. Connectors cannot declare or select these.
-PII_TAG_KEYS = frozenset({"assignee_email", "reporter_email", "sender_email"})
+# Email-bearing keys. GitHub stores login/name/email inside user, assignees,
+# merged_by, and closed_by — block the stored keys, not invented *_email names.
+PII_TAG_KEYS = frozenset(
+    {
+        "assignee_email",
+        "reporter_email",
+        "sender_email",
+        "user",
+        "assignees",
+        "merged_by",
+        "closed_by",
+    }
+)
 
 
 class FieldCategory(str, Enum):
