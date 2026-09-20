@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from onyx.configs.constants import DocumentSource
 from onyx.connectors.field_schema import FieldDecl
+from onyx.connectors.github.fields import FIELD_SCHEMA as GITHUB_FIELD_SCHEMA
 from onyx.connectors.jira.fields import FIELD_SCHEMA as JIRA_FIELD_SCHEMA
 from onyx.connectors.slack.fields import FIELD_SCHEMA as SLACK_FIELD_SCHEMA
 from onyx.connectors.teams.fields import FIELD_SCHEMA as TEAMS_FIELD_SCHEMA
@@ -16,6 +17,7 @@ FIELD_SCHEMAS: dict[DocumentSource, tuple[FieldDecl, ...]] = {
     DocumentSource.SLACK: SLACK_FIELD_SCHEMA,
     DocumentSource.TEAMS: TEAMS_FIELD_SCHEMA,
     DocumentSource.JIRA: JIRA_FIELD_SCHEMA,
+    DocumentSource.GITHUB: GITHUB_FIELD_SCHEMA,
 }
 
 

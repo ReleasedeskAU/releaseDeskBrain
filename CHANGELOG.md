@@ -31,6 +31,15 @@
   ``assignee_email`` / ``reporter_email`` blocks are unchanged. A connector
   schema that lists the key fails at load.
 
+- GitHub Ask field schema: GitHub declares the current queryable tags
+  (``object_type``, ``repo``, ``state``, ``merged``, ``labels``,
+  ``num_commits``, ``num_files_changed``) in ``FIELD_SCHEMA``. Unset
+  inherits that list so existing tenants who do not open settings keep
+  today's catalog. Empty list is none. People tags that can hold email
+  (``user``, ``assignees``, ``merged_by``, ``closed_by``) stay out and
+  are on the platform PII blocklist. Unchecking does not purge stored
+  tags or force a re-index (BN-378).
+
 - Jira Ask field schema: Jira declares the current queryable ticket tags
   (key, status, status_category, people, dates, parent, links, labels —
   never emails or ``custom_fields``) in ``FIELD_SCHEMA``. Unset selection

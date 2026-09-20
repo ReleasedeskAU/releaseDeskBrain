@@ -188,6 +188,30 @@ def test_slack_queryable_fields_unset_match_today_slack_tags() -> None:
     with pytest.raises(DocumentCountError):
         require_source_filter_field("channel", DocumentSource.JIRA, None)
     assert require_source_filter_field("assignee", DocumentSource.JIRA, None) == "assignee"
+    github = queryable_fields_for_source(DocumentSource.GITHUB, None)
+    assert github["fields"] == [
+        "labels",
+        "merged",
+        "num_commits",
+        "num_files_changed",
+        "object_type",
+        "repo",
+        "state",
+    ]
+    assert github["contains_match"] == ["labels"]
+    assert "channel" not in github["fields"]
+    assert "user" not in github["fields"]
+    assert "assignees" not in github["fields"]
+    assert "merged_by" not in github["fields"]
+    assert "closed_by" not in github["fields"]
+    assert "Unset inherits today's GitHub catalog" in str(github["note"])
+    via_github = list_queryable_fields(DocumentSource.GITHUB, None)
+    assert via_github["fields"] == github["fields"]
+    assert require_source_filter_field("repo", DocumentSource.GITHUB, None) == "repo"
+    with pytest.raises(DocumentCountError):
+        require_source_filter_field("channel", DocumentSource.GITHUB, None)
+    with pytest.raises(DocumentCountError):
+        require_source_filter_field("user", DocumentSource.GITHUB, None)
 
 
 def test_slack_empty_selection_hides_optional_tags() -> None:
@@ -261,5 +285,55 @@ def test_jira_unset_row_keeps_today_catalog() -> None:
     assert "status_category" in keys
     assert "assignee_email" not in keys
     assert "custom_fields" not in keys
+    assert "channel" not in keys
+
+
+def test_github_empty_selection_hides_optional_tags() -> None:
+    from onyx.connectors.github.fields import FIELD_SCHEMA
+    from onyx.db.document_count import declared_queryable_keys
+
+    class _FakeSession:
+        def execute(self, _stmt: object) -> "_FakeSession":
+            return self
+
+        def scalars(self) -> "_FakeSession":
+            return self
+
+        def all(self) -> list[list[str]]:
+            return [[]]
+
+    assert (
+        declared_queryable_keys(DocumentSource.GITHUB, FIELD_SCHEMA, _FakeSession())
+        == frozenset()
+    )
+
+
+def test_github_unset_row_keeps_today_catalog() -> None:
+    from onyx.connectors.github.fields import FIELD_SCHEMA
+    from onyx.db.document_count import declared_queryable_keys
+
+    class _FakeSession:
+        def execute(self, _stmt: object) -> "_FakeSession":
+            return self
+
+        def scalars(self) -> "_FakeSession":
+            return self
+
+        def all(self) -> list[None]:
+            return [None]
+
+    keys = declared_queryable_keys(DocumentSource.GITHUB, FIELD_SCHEMA, _FakeSession())
+    assert keys == frozenset(
+        {
+            "object_type",
+            "repo",
+            "state",
+            "merged",
+            "labels",
+            "num_commits",
+            "num_files_changed",
+        }
+    )
+    assert "user" not in keys
     assert "channel" not in keys
 

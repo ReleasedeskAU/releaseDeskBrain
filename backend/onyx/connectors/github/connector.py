@@ -32,6 +32,7 @@ from onyx.connectors.github.commits import (
     map_commit_to_document,
     slim_commit_document,
 )
+from onyx.connectors.github.fields import FIELD_SCHEMA
 from onyx.connectors.github.models import SerializedRepository
 from onyx.connectors.github.overview import (
     RepoOverviewFacts,
@@ -40,8 +41,8 @@ from onyx.connectors.github.overview import (
     map_readme_to_document,
     slim_overview_documents,
 )
-from onyx.connectors.github.scopes import assert_github_client_repo_read
 from onyx.connectors.github.rate_limit_utils import sleep_after_rate_limit_exception
+from onyx.connectors.github.scopes import assert_github_client_repo_read
 from onyx.connectors.github.utils import (
     deserialize_repository,
     get_external_access_permission,
@@ -639,6 +640,8 @@ class GithubConnector(
     SlimConnector,
     SlimConnectorWithPermSync,
 ):
+    field_schema = FIELD_SCHEMA
+
     def __init__(
         self,
         repo_owner: str,
