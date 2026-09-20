@@ -168,13 +168,25 @@ def test_slack_queryable_fields_unset_match_today_slack_tags() -> None:
     assert teams["fields"] == ["author", "channel"]
     assert teams["contains_match"] == ["author"]
     jira = queryable_fields_for_source(DocumentSource.JIRA, None)
-    assert jira["fields"] == global_fields
+    assert "assignee" in jira["fields"]
+    assert "channel" not in jira["fields"]
+    assert "assignee_email" not in jira["fields"]
+    assert "custom_fields" not in jira["fields"]
+    assert jira["contains_match"] == [
+        "assignee",
+        "labels",
+        "last_updater",
+        "reporter",
+    ]
+    assert "Unset inherits today's Jira catalog" in str(jira["note"])
     assert require_source_filter_field("channel", DocumentSource.SLACK, None) == "channel"
     assert require_source_filter_field("channel", DocumentSource.TEAMS, None) == "channel"
     with pytest.raises(DocumentCountError):
         require_source_filter_field("assignee", DocumentSource.SLACK, None)
     with pytest.raises(DocumentCountError):
         require_source_filter_field("assignee", DocumentSource.TEAMS, None)
+    with pytest.raises(DocumentCountError):
+        require_source_filter_field("channel", DocumentSource.JIRA, None)
     assert require_source_filter_field("assignee", DocumentSource.JIRA, None) == "assignee"
 
 
@@ -208,4 +220,46 @@ def test_slack_unset_row_keeps_channel_and_author() -> None:
             return [None]
 
     assert slack_queryable_keys(_FakeSession()) == frozenset({"channel", "author"})
+
+
+def test_jira_empty_selection_hides_optional_tags() -> None:
+    from onyx.connectors.jira.fields import FIELD_SCHEMA
+    from onyx.db.document_count import declared_queryable_keys
+
+    class _FakeSession:
+        def execute(self, _stmt: object) -> "_FakeSession":
+            return self
+
+        def scalars(self) -> "_FakeSession":
+            return self
+
+        def all(self) -> list[list[str]]:
+            return [[]]
+
+    assert (
+        declared_queryable_keys(DocumentSource.JIRA, FIELD_SCHEMA, _FakeSession())
+        == frozenset()
+    )
+
+
+def test_jira_unset_row_keeps_today_catalog() -> None:
+    from onyx.connectors.jira.fields import FIELD_SCHEMA
+    from onyx.db.document_count import declared_queryable_keys
+
+    class _FakeSession:
+        def execute(self, _stmt: object) -> "_FakeSession":
+            return self
+
+        def scalars(self) -> "_FakeSession":
+            return self
+
+        def all(self) -> list[None]:
+            return [None]
+
+    keys = declared_queryable_keys(DocumentSource.JIRA, FIELD_SCHEMA, _FakeSession())
+    assert "assignee" in keys
+    assert "status_category" in keys
+    assert "assignee_email" not in keys
+    assert "custom_fields" not in keys
+    assert "channel" not in keys
 

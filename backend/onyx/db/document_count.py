@@ -162,6 +162,13 @@ def queryable_fields_for_source(
             "Unset inherits channel and author. Empty list is none. "
             "Unchecking does not purge stored tags or force a re-index."
         )
+    elif source == DocumentSource.JIRA:
+        payload["note"] = (
+            "Jira optional tags from this tenant's field selection. "
+            "Unset inherits today's Jira catalog (no emails, no custom_fields). "
+            "Empty list is none. Unchecking does not purge stored tags or "
+            "force a re-index."
+        )
     else:
         payload["note"] = (
             "Optional tags from this tenant's field selection. "
