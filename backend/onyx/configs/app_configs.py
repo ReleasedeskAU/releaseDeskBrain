@@ -1608,6 +1608,8 @@ RECENCY_BIAS_MULTIPLIER = float(os.environ.get("RECENCY_BIAS_MULTIPLIER") or 1.0
 # Hugging Face TEI on the compose network (admin hybrid search only).
 # Off by default. Keyword / Connectors search never calls it.
 ENABLE_RERANK = os.environ.get("ENABLE_RERANK", "").lower() == "true"
+# Admin hybrid search only. Off by default. Hypothesis curve lives in recency_bias.py.
+ENABLE_RECENCY_BIAS = os.environ.get("ENABLE_RECENCY_BIAS", "").lower() == "true"
 RERANKER_URL = (os.environ.get("RERANKER_URL") or "http://reranker:80").rstrip("/")
 RERANK_TIMEOUT_SECONDS = float(os.environ.get("RERANK_TIMEOUT_SECONDS") or 3)
 # Live timing on D4as_v5 at 2 CPU / 5g: 10 candidates ~1.3s idle and under a

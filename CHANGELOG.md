@@ -11,6 +11,12 @@
 
 ### Added
 
+- Admin hybrid search can re-sort unique hits by recency after fusion
+  (``ENABLE_RECENCY_BIAS=false`` by default). Uses indexed ``last_updated``
+  (connector ``doc_updated_at``). Curve is a hypothesis: 45-day half-life,
+  0.70 floor. Missing dates are left unchanged. Keyword / Connectors /
+  catalog lookups are unchanged.
+
 - Admin hybrid search can rerank unique hits through the self-hosted TEI
   service (``ENABLE_RERANK=false`` by default, ``RERANKER_URL=http://reranker:80``).
   After document-id dedupe, up to 10 passages (capped at 1512 chars so TEI

@@ -47,6 +47,10 @@ from onyx.server.query_and_chat.models import (
     SourceTag,
     TagResponse,
 )
+from onyx.server.query_and_chat.recency_bias import (
+    maybe_apply_recency_bias,
+    should_apply_recency_bias,
+)
 from onyx.server.query_and_chat.tei_rerank import (
     maybe_rerank_hybrid_documents,
     should_rerank_admin_search,
@@ -385,6 +389,9 @@ def admin_search(
             deduplicated_documents.append(document)
             seen_documents.add(document.document_id)
     # Unique docs, not raw chunks — one Slack thread would otherwise fill the TEI batch.
+    # Recency re-sorts fused hybrid hits; TEI (when on) still runs after and can override.
+    if should_apply_recency_bias(question.retrieval, query):
+        deduplicated_documents = maybe_apply_recency_bias(deduplicated_documents)
     if should_rerank_admin_search(question.retrieval, query):
         deduplicated_documents = maybe_rerank_hybrid_documents(
             query, deduplicated_documents
