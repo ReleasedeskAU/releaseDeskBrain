@@ -16,6 +16,7 @@ from botocore.session import get_session
 
 from onyx.configs.app_configs import BLOB_STORAGE_SIZE_THRESHOLD, INDEX_BATCH_SIZE
 from onyx.configs.constants import BlobType, DocumentSource, FileOrigin
+from onyx.connectors.blob.prefixes import resolve_blob_prefixes
 from onyx.connectors.cross_connector_utils.miscellaneous_utils import (
     process_onyx_metadata,
 )
@@ -64,13 +65,17 @@ class BlobStorageConnector(LoadConnector, PollConnector):
         bucket_type: str,
         bucket_name: str,
         prefix: str = "",
+        prefixes: list[str] | None = None,
         batch_size: int = INDEX_BATCH_SIZE,
         european_residency: bool = False,
         region_name: str | None = None,
     ) -> None:
         self.bucket_type: BlobType = BlobType(bucket_type)
         self.bucket_name = bucket_name.strip()
-        self.prefix = prefix if not prefix or prefix.endswith("/") else prefix + "/"
+        # Factory passes stored JSON as kwargs. Keep `prefix` so older rows
+        # still instantiate; `prefixes` is the stored list on new rows.
+        self.prefixes = resolve_blob_prefixes(prefixes, prefix)
+        self.prefix = self.prefixes[0]
         self.batch_size = batch_size
         self.s3_client: Optional["S3Client"] = None
         self._allow_images: bool | None = None
@@ -400,10 +405,10 @@ class BlobStorageConnector(LoadConnector, PollConnector):
             raise ConnectorMissingCredentialError("Blob storage")
 
         paginator = self.s3_client.get_paginator("list_objects_v2")
-        pages = paginator.paginate(Bucket=self.bucket_name, Prefix=self.prefix)
 
         batch: list[Document | HierarchyNode] = []
-        for page in pages:
+        # Same list/paginate path as the single-prefix connector, once per folder.
+        for page in self._iter_prefix_pages(paginator):
             if "Contents" not in page:
                 continue
 
@@ -586,6 +591,11 @@ class BlobStorageConnector(LoadConnector, PollConnector):
         if batch:
             yield batch
 
+    def _iter_prefix_pages(self, paginator: Any) -> Any:
+        """Yield list_objects_v2 pages for each stored prefix in order."""
+        for prefix in self.prefixes:
+            yield from paginator.paginate(Bucket=self.bucket_name, Prefix=prefix)
+
     def load_from_state(self) -> GenerateDocumentsOutput:
         logger.debug("Loading blob objects")
         return self._yield_blob_objects(
@@ -621,9 +631,10 @@ class BlobStorageConnector(LoadConnector, PollConnector):
         try:
             # We only fetch one object/page as a light-weight validation step.
             # This ensures we trigger typical S3 permission checks (ListObjectsV2, etc.).
-            self.s3_client.list_objects_v2(
-                Bucket=self.bucket_name, Prefix=self.prefix, MaxKeys=1
-            )
+            for prefix in self.prefixes:
+                self.s3_client.list_objects_v2(
+                    Bucket=self.bucket_name, Prefix=prefix, MaxKeys=1
+                )
 
         except NoCredentialsError:
             raise ConnectorMissingCredentialError(

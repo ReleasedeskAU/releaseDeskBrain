@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
@@ -133,3 +134,46 @@ def test_govcloud_blob_link_uses_govcloud_console() -> None:
     link = connector._get_blob_link("some/key.pdf")
     assert link.startswith("https://console.amazonaws-us-gov.com/s3/object/test-bucket")
     assert "region=us-gov-west-1" in link
+
+
+def test_yield_paginates_each_prefix() -> None:
+    connector = BlobStorageConnector(
+        bucket_type=BlobType.S3.value,
+        bucket_name="releases",
+        prefixes=["docs/", "images/"],
+    )
+    paginator = MagicMock()
+    paginator.paginate.return_value = []
+    connector.s3_client = MagicMock()
+    connector.s3_client.get_paginator.return_value = paginator
+
+    list(
+        connector._yield_blob_objects(
+            datetime(1970, 1, 1, tzinfo=timezone.utc),
+            datetime.now(timezone.utc),
+        )
+    )
+
+    assert [call.kwargs["Prefix"] for call in paginator.paginate.call_args_list] == [
+        "docs/",
+        "images/",
+    ]
+    assert all(
+        call.kwargs["Bucket"] == "releases"
+        for call in paginator.paginate.call_args_list
+    )
+
+
+def test_validate_lists_each_prefix() -> None:
+    connector = BlobStorageConnector(
+        bucket_type=BlobType.S3.value,
+        bucket_name="releases",
+        prefixes=["docs/", "images/"],
+    )
+    connector.s3_client = MagicMock()
+    connector.validate_connector_settings()
+    assert connector.s3_client.list_objects_v2.call_count == 2
+    assert [
+        call.kwargs["Prefix"]
+        for call in connector.s3_client.list_objects_v2.call_args_list
+    ] == ["docs/", "images/"]
