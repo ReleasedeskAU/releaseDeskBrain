@@ -177,5 +177,40 @@ services:
           # 5g / 2 CPU uses host headroom without changing other service limits.
           memory: ${RERANKER_MEM_LIMIT:-5g}
 
+  # Empty graph. Not wired to api_server or background. No host port:
+  # bolt (7687) and http (7474) stay on the compose network, same as
+  # OpenSearch and Postgres. Start it alone (pulled image, not a local build):
+  #   pull neo4j && up -d --no-deps --wait neo4j
+  # Heap 512m + page cache 256m stays inside the 2g cgroup. ~7 GB was free
+  # on this VM with the encoder already up; 2g leaves the rest for spikes.
+  # NEO4J_PASSWORD is required (no default). Neo4j rejects the password "neo4j".
+  neo4j:
+    image: neo4j:5-community
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in deployment/docker_compose/.env}
+      NEO4J_server_memory_heap_initial__size: 512m
+      NEO4J_server_memory_heap_max__size: 512m
+      NEO4J_server_memory_pagecache_size: 256m
+    volumes:
+      - neo4j_data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "6"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7474"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: ${NEO4J_CPU_LIMIT:-0.5}
+          memory: ${NEO4J_MEM_LIMIT:-2g}
+
 volumes:
   reranker_model_cache:
+  neo4j_data:
