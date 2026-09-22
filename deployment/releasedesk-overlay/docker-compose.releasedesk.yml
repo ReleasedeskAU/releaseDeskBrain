@@ -20,9 +20,11 @@
 # (deployment/docker_compose), so nginx templates use ../releasedesk-overlay/nginx.
 #
 # This overlay:
-#   - Does not start web_server (StaffLess AI UI) or local model servers
+#   - Does not start web_server (StaffLess AI UI)
+#   - Starts one shared inference_model_server (query + indexing). Leaves
+#     indexing_model_server on profile local-models (off).
 #   - Makes nginx independent of web_server and proxies all traffic to the API
-#   - Makes model-server depends_on optional
+#   - Makes model-server depends_on optional until that container is healthy
 #   - Caps RAM for D4as_v5 / D4s_v5 (16 GB). Host OS (Ubuntu 24.04) does not
 #     change these limits. In-compose nginx is not host nginx.
 #   - Adds an optional CPU TEI reranker (no host port). Start it alone:
@@ -40,8 +42,17 @@ services:
   web_server:
     profiles: ["onyx-ui"]
 
+  # One shared encoder (query + indexing). A second indexing_model_server
+  # at 5g does not fit D4as_v5 next to api/background/OpenSearch.
   inference_model_server:
-    profiles: ["local-models"]
+    image: ${ONYX_MODEL_SERVER_IMAGE:-releasedesk/staffless-model-server:local}
+    environment:
+      - INDEXING_ONLY=false
+    deploy:
+      resources:
+        limits:
+          cpus: ${INFERENCE_CPU_LIMIT:-2.0}
+          memory: ${INFERENCE_MEM_LIMIT:-4g}
 
   indexing_model_server:
     profiles: ["local-models"]
@@ -52,9 +63,9 @@ services:
         condition: service_started
         required: false
     environment:
-      - DISABLE_MODEL_SERVER=true
-      - MODEL_SERVER_HOST=disabled
-      - INDEXING_MODEL_SERVER_HOST=disabled
+      - DISABLE_MODEL_SERVER=false
+      - MODEL_SERVER_HOST=inference_model_server
+      - INDEXING_MODEL_SERVER_HOST=inference_model_server
       - FILE_STORE_BACKEND=${FILE_STORE_BACKEND:-postgres}
     deploy:
       resources:
@@ -71,9 +82,9 @@ services:
         condition: service_started
         required: false
     environment:
-      - DISABLE_MODEL_SERVER=true
-      - MODEL_SERVER_HOST=disabled
-      - INDEXING_MODEL_SERVER_HOST=disabled
+      - DISABLE_MODEL_SERVER=false
+      - MODEL_SERVER_HOST=inference_model_server
+      - INDEXING_MODEL_SERVER_HOST=inference_model_server
       - FILE_STORE_BACKEND=${FILE_STORE_BACKEND:-postgres}
       # 6 docprocessing workers * INDEX_BATCH_SIZE 16 OOMs a 2g cgroup (celery
       # MEMCG kills). Keep peak RSS inside BACKGROUND_MEM_LIMIT on D4as_v5.

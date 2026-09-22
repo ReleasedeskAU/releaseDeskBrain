@@ -2,6 +2,33 @@ from pydantic import BaseModel
 
 from onyx.db.enums import EmbeddingPrecision
 
+# Hugging Face id. Apache-2.0. Loaded by model_server SentenceTransformer.
+QWEN3_EMBEDDING_0_6B = "Qwen/Qwen3-Embedding-0.6B"
+QWEN3_EMBEDDING_0_6B_DIM = 1024
+# Exact string from Qwen3-Embedding-0.6B config_sentence_transformers.json
+# (prompt name "query"). Documents use no prefix. Wrong query prefix is a
+# real retrieval regression.
+QWEN3_EMBEDDING_QUERY_PREFIX = (
+    "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:"
+)
+
+
+def default_embedding_prefixes(model_name: str) -> tuple[str, str]:
+    """Return (query_prefix, passage_prefix) required by a local encoder.
+
+    Cloud models take an explicit text type and must not get a prefix string.
+    Unknown local models get empty prefixes — do not invent nomic-style ones.
+
+    Args:
+        model_name: Hugging Face or cloud model id.
+
+    Returns:
+        Query prefix and passage prefix. Either may be empty.
+    """
+    if model_name == QWEN3_EMBEDDING_0_6B:
+        return QWEN3_EMBEDDING_QUERY_PREFIX, ""
+    return "", ""
+
 
 class _BaseEmbeddingModel(BaseModel):
     """Private model for defining base embedding model configurations."""
@@ -107,6 +134,11 @@ _BASE_EMBEDDING_MODELS = [
         index_name="danswer_chunk_light_2_instruct",
     ),
     # Self-hosted models
+    _BaseEmbeddingModel(
+        name="Qwen/Qwen3-Embedding-0.6B",
+        dim=1024,
+        index_name="danswer_chunk_qwen_qwen3_embedding_0_6b",
+    ),
     _BaseEmbeddingModel(
         name="nomic-ai/nomic-embed-text-v1",
         dim=768,

@@ -12,6 +12,7 @@ from onyx.background.celery.tasks.port.tasks import (
 from onyx.background.celery.versioned_apps.client import app as client_app
 from onyx.configs.app_configs import DISABLE_INDEX_UPDATE_ON_SWAP
 from onyx.configs.constants import ONYX_DEFAULT_APPLICATION_NAME
+from onyx.configs.embedding_configs import default_embedding_prefixes
 from onyx.context.search.models import (
     ContextualRagModelUpdateResponse,
     SavedSearchSettings,
@@ -153,6 +154,17 @@ def set_new_search_settings(
         new_search_settings_request = SavedSearchSettings(
             **search_settings_new.model_dump()
         )
+
+    # Local encoders that require an instruct/query prefix: fill only when the
+    # request left prefixes blank. Cloud providers reject prefix strings later.
+    if new_search_settings_request.provider_type is None:
+        query_prefix, passage_prefix = default_embedding_prefixes(
+            new_search_settings_request.model_name
+        )
+        if query_prefix and not new_search_settings_request.query_prefix:
+            new_search_settings_request.query_prefix = query_prefix
+        if passage_prefix and not new_search_settings_request.passage_prefix:
+            new_search_settings_request.passage_prefix = passage_prefix
 
     # ALT_INDEX_SUFFIX alternation can make this FUTURE's index_name equal a PAST's whose
     # data isn't reclaimed yet. Refuse before verify_and_create_index_if_necessary below

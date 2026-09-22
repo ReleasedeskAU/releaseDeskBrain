@@ -11,6 +11,12 @@
 
 ### Added
 
+- Self-hosted ``Qwen/Qwen3-Embedding-0.6B`` is a registered local encoder
+  (1024-d). The overlay starts one shared ``inference_model_server`` and
+  points both query and indexing at it. Query prefix is the published
+  instruct string; documents have no prefix. New search-settings requests
+  for this model fill that prefix when the caller leaves it blank (BN-378).
+
 - Admin hybrid search can re-sort unique hits by recency after fusion
   (``ENABLE_RECENCY_BIAS=false`` by default). Uses indexed ``last_updated``
   (connector ``doc_updated_at``). Curve is a hypothesis: 45-day half-life,

@@ -68,7 +68,11 @@ CPU image). Cgroup cap is **5g / 2 CPU** (3g / 1 CPU sat the cgroup;
 30-candidate rerank was ~7.5s). Ask/search
 is **not** pointed at it (that would recreate `api_server`).
 
-Do **not** start `inference_model_server` for this. Pull then start **only**
+Embeddings use the overlay's one shared `inference_model_server`
+(SentenceTransformer, `Qwen/Qwen3-Embedding-0.6B`). Do **not** start
+`indexing_model_server` (second 5g cgroup). Do **not** embed through TEI.
+
+Do **not** start a second encoder for the reranker. Pull then start **only**
 `reranker`:
 
 ```bash
