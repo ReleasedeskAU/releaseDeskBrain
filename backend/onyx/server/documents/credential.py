@@ -1,12 +1,13 @@
 import json
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from sqlalchemy.orm import Session
 
 from onyx.auth.permissions import require_permission
 from onyx.auth.scoped_permissions import assert_within_scope
 from onyx.configs.constants import PUBLIC_API_TAGS
 from onyx.connectors.factory import validate_ccpair_for_user
+from onyx.db.connector import get_connector_credential_ids
 from onyx.db.credentials import (
     CREDENTIAL_PERMISSIONS_TO_IGNORE,
     alter_credential,
@@ -22,6 +23,7 @@ from onyx.db.credentials import (
 from onyx.db.engine.sql_engine import get_session
 from onyx.db.enums import Permission
 from onyx.db.models import DocumentSource, User
+from onyx.server.documents.unmasked_credential import is_service_credential
 from onyx.server.documents.models import (
     CredentialBase,
     CredentialDataUpdateRequest,
@@ -461,3 +463,50 @@ def force_delete_credential_by_id(
     return StatusResponse(
         success=True, message="Credential deleted successfully", data=credential_id
     )
+
+
+@router.get("/admin/connector/{connector_id}/credential-unmasked")
+def read_unmasked_connector_credential(
+    connector_id: int,
+    request: Request,
+    user: User = Depends(require_permission(Permission.MANAGE_CONNECTORS)),
+    db_session: Session = Depends(get_session),
+) -> dict:
+    """Return the raw credential JSON for one connector.
+
+    Session cookies and Craft PATs are rejected. The body is not logged.
+    Callers must not forward credential_json to a browser.
+    """
+    identity = getattr(request.state, "usage_credential", None)  # noqa: B009
+    if not is_service_credential(identity):
+        raise HTTPException(
+            status_code=403,
+            detail="Stored credentials are available to the service PAT only",
+        )
+    try:
+        credential_ids = get_connector_credential_ids(connector_id, db_session)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Connector not found") from None
+    if len(credential_ids) != 1:
+        raise HTTPException(
+            status_code=409,
+            detail="Connector does not have exactly one credential",
+        )
+    credential = fetch_credential_by_id_for_user(credential_ids[0], user, db_session)
+    if credential is None or credential.credential_json is None:
+        raise HTTPException(status_code=404, detail="Credential not found")
+    try:
+        raw = credential.credential_json.get_value(apply_mask=False)
+    except Exception:
+        # Decrypt failures can include key material. Log the id only.
+        logger.error(
+            "unmasked credential decrypt failed connector_id=%s", connector_id
+        )
+        raise HTTPException(
+            status_code=502, detail="Stored credential is unavailable"
+        ) from None
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=502, detail="Stored credential is unavailable")
+    source = credential.source.value if credential.source is not None else ""
+    logger.info("unmasked credential read connector_id=%s", connector_id)
+    return {"source": source, "credential_json": raw}
